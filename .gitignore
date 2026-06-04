@@ -1,0 +1,19 @@
+# run outputs / checkpoints (large; not for git)
+runs/
+
+# large binaries / data
+*.pt
+*.npy
+*.h5
+*.tar.xz
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# editor / local
+.claude/
+.vscode/
+.DS_Store
