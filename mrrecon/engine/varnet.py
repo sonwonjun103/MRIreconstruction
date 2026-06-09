@@ -3,8 +3,8 @@
 VarNet outputs in the RSS domain, the same domain as the fastMRI ground truth,
 so the RSS metrics have no SENSE-vs-RSS ceiling (a perfect recon reaches SSIM
 1.0) and are directly leaderboard-comparable. The refinement CNN is the toolkit
-U-Net (``--varnet_cnn unet``) or the hierarchical Mamba backbone
-(``--varnet_cnn mamba``).
+U-Net (``--cnn unet``) or the hierarchical Mamba backbone (``--cnn mamba``);
+the official E2E-VarNet (learned SME) is selected by the ``varnet`` method.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from torch.utils.data import DataLoader
 
 from ..data.loaders import list_slice_files
 from ..data.datasets import VarNetDataset
-from ..models.varnet import build_varnet
+from ..models.varnet import build_recon
 from ..losses import SupervisedLoss
 from ..metrics import all_metrics
 from .common import (save_curves, save_mask_preview, set_seed, get_device, acc_dir,
@@ -39,11 +39,13 @@ class VarNetTrainer:
                                    num_workers=cfg.num_workers)
         self.val_dl = DataLoader(VarNetDataset(cfg, va, train=False),
                                  batch_size=1, shuffle=False, num_workers=cfg.num_workers)
-        self.model = build_varnet(cfg).to(self.device)
-        impl = "official" if getattr(cfg, "varnet_official", False) else f"cnn={cfg.varnet_cnn}"
-        self.tag = (f"varnet {impl} cascades={cfg.varnet_cascades} "
-                    f"loss={cfg.loss} | acc={cfg.acc_rate} acs={cfg.acs_lines} "
-                    f"mask={cfg.mask_type} data={'full' if cfg.full_subject else 'central'}")
+        self.model = build_recon(cfg).to(self.device)
+        if getattr(cfg, "varnet_official", False):
+            self.tag = (f"varnet(official-SME) cascades={cfg.varnet_cascades} loss={cfg.loss}")
+        else:
+            self.tag = (f"dccnn cnn={cfg.cnn} cascades={cfg.dc_cascades} loss={cfg.loss}")
+        self.tag += (f" | acc={cfg.acc_rate} acs={cfg.acs_lines} "
+                     f"mask={cfg.mask_type} data={'full' if cfg.full_subject else 'central'}")
         print(f"[train] {self.tag} | tissue={cfg.tissue} modality={cfg.modality or 'all'} "
               f"| train {len(tr)} / val {len(va)} slices")
         self.optim = torch.optim.Adam(self.model.parameters(), lr=cfg.lr)
@@ -124,7 +126,8 @@ class VarNetTrainer:
                         title=f"{self.cfg.run_name} | {self.tag}")
 
         train_seconds = time.time() - train_t0
-        save_json({"phase": "train", "method": "varnet", "tag": self.tag,
+        method_name = "varnet" if getattr(self.cfg, "varnet_official", False) else "dccnn"
+        save_json({"phase": "train", "method": method_name, "tag": self.tag,
                    "epochs": len(history), "train_seconds": round(train_seconds, 2),
                    "sec_per_epoch": round(train_seconds / max(len(history), 1), 2)},
                   os.path.join(rdir, "timing.json"))

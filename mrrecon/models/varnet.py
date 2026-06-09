@@ -1,21 +1,26 @@
-"""End-to-end VarNet: multi-coil k-space refinement with an RSS output.
+"""Multi-coil k-space reconstruction with an RSS output. Two models:
 
-Unlike the SENSE-domain unrolled nets (``ssdu`` / ``mymodel``), VarNet keeps the
-**full multi-coil k-space** as its state and only root-sum-of-squares (RSS)
-combines at the very end. The reconstructed RSS therefore lives in the *same
-domain as the fastMRI ground truth* -- so scoring against the RSS GT has no
-SENSE-vs-RSS "ceiling": a perfect recon reaches SSIM 1.0. This makes every
-method directly comparable to the RSS leaderboard.
+  * ``DCCNN`` -- our **Deep Cascade**: soft-DC cascades with a pluggable backbone
+    (``--cnn`` unet/swin/mamba) and FIXED precomputed ESPIRiT sensitivities. NOT
+    the official E2E-VarNet (no learned sensitivity-map estimation).
+  * ``VarNet`` -- the **official** facebookresearch/fastMRI E2E-VarNet wrapper
+    (learned SME). Selected by the ``varnet`` method.
 
-Each cascade (E2E-VarNet, Sriram et al. 2020)::
+Unlike the SENSE-domain unrolled nets (``ssdu`` / ``mymodel``), both keep the
+**full multi-coil k-space** as state and only root-sum-of-squares (RSS) combine
+at the very end. The RSS therefore lives in the *same domain as the fastMRI
+ground truth* -- scoring against the RSS GT has no SENSE-vs-RSS "ceiling" (a
+perfect recon reaches SSIM 1.0), directly comparable to the RSS leaderboard.
+
+Each DCCNN cascade (cf. E2E-VarNet, Sriram et al. 2020)::
 
     k_{t+1} = k_t - eta_t * M (k_t - k0)               # k-space data consistency
                   - Expand( CNN( Reduce(k_t) ) )       # sensitivity-modelled refinement
 
 where ``Reduce`` is the SENSE coil-combination (E^H), ``Expand`` is its adjoint
 (E), and ``CNN`` is a shared-per-cascade image denoiser. The denoiser is reused
-from the rest of the toolkit (the fastMRI U-Net or the hierarchical Mamba
-backbone), selected by ``--varnet_cnn``. Sensitivity maps are the pre-computed
+from the rest of the toolkit (MONAI U-Net/SwinUNETR or the hierarchical Mamba
+backbone), selected by ``--cnn``. Sensitivity maps are the pre-computed
 ESPIRiT maps passed in with each slice.
 
 The same backbone serves all three training regimes:
@@ -65,7 +70,7 @@ def _build_cnn(cfg):
     # unet/swin reuse the SAME MONAI backbones as the no-DC supervised path
     # (in_out_ch=2 for the complex coil-combined image, residual=False because the
     # cascade supplies the residual) -> a clean "same backbone +/- DC" ablation.
-    kind = getattr(cfg, "varnet_cnn", "unet")
+    kind = getattr(cfg, "cnn", "unet")
     if kind == "unet":
         from .monai_nets import build_monai_unet
         return build_monai_unet(cfg, in_out_ch=2, residual=False)
@@ -80,13 +85,13 @@ def _build_cnn(cfg):
             mamba_levels=getattr(cfg, "mymodel_mamba_levels", 1),
             d_state=getattr(cfg, "mymodel_dstate", 16),
             expand=getattr(cfg, "mymodel_expand", 1), residual=False)
-    raise ValueError(f"unknown varnet_cnn: {kind}")
+    raise ValueError(f"unknown cnn backbone: {kind}")
 
 
 # --------------------------------------------------------------------------- #
 # cascade + full network
 # --------------------------------------------------------------------------- #
-class VarNetBlock(nn.Module):
+class DCBlock(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.model = _build_cnn(cfg)
@@ -98,20 +103,22 @@ class VarNetBlock(nn.Module):
         return k - soft_dc - model_term
 
 
-class VarNet(nn.Module):
-    """Stack of VarNet cascades. Returns the refined multi-coil k-space.
-
-    ``forward`` signature mirrors the other models loosely but operates on
-    *multi-coil k-space* rather than a coil-combined image:
+class DCCNN(nn.Module):
+    """Deep Cascade: stack of soft-DC cascades with a pluggable backbone (--cnn:
+    unet/swin/mamba) and FIXED (precomputed ESPIRiT) sensitivity maps. Returns the
+    refined multi-coil k-space; operates on
         masked_kspace (B,C,H,W) complex, sens (B,C,H,W) complex, mask (B,1,H,W).
     Use :func:`kspace_to_rss` (or :meth:`reconstruct`) for the RSS image.
+
+    NOTE: not the official E2E-VarNet -- there is no learned sensitivity-map
+    estimation here. The official VarNet (learned SME) is the ``VarNet`` class.
     """
 
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        n = getattr(cfg, "varnet_cascades", 8)
-        self.cascades = nn.ModuleList([VarNetBlock(cfg) for _ in range(n)])
+        n = getattr(cfg, "dc_cascades", 8)
+        self.cascades = nn.ModuleList([DCBlock(cfg) for _ in range(n)])
 
     def forward(self, masked_kspace, sens, mask):
         k = masked_kspace
@@ -124,7 +131,7 @@ class VarNet(nn.Module):
         return kspace_to_rss(self.forward(masked_kspace, sens, mask))
 
 
-class OfficialVarNet(nn.Module):
+class VarNet(nn.Module):
     """Thin wrapper around the official facebookresearch/fastMRI ``VarNet``
     (verbatim ``fastmri.models.VarNet``, including the learned Sensitivity-Map
     Estimation module). Adapts our calling convention -- complex k-space
@@ -157,6 +164,7 @@ class OfficialVarNet(nn.Module):
         return self.reconstruct(masked_kspace, sens, mask)
 
 
-def build_varnet(cfg):
-    """Official fastMRI VarNet if ``--varnet_official`` else our VarNet."""
-    return OfficialVarNet(cfg) if getattr(cfg, "varnet_official", False) else VarNet(cfg)
+def build_recon(cfg):
+    """Official E2E-VarNet (learned SME) if ``cfg.varnet_official`` else our DCCNN
+    (Deep Cascade with a pluggable backbone and fixed ESPIRiT sensitivities)."""
+    return VarNet(cfg) if getattr(cfg, "varnet_official", False) else DCCNN(cfg)

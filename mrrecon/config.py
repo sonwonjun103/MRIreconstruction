@@ -60,12 +60,13 @@ class Config:
     mymodel_dstate: int = 16              # SSM state dimension N
     mymodel_expand: int = 1               # SS2D inner expansion (1 = lean, zero-shot friendly)
 
-    # ---- VarNet: multi-coil k-space cascades with RSS output ----
-    use_dc: bool = False                  # supervised: wrap --arch in VarNet (data consistency)
-    varnet_cascades: int = 8              # number of unrolled cascades
-    varnet_cnn: str = "unet"              # refinement CNN: "unet" | "swin" | "mamba"
-    # official facebookresearch/fastMRI VarNet (learned SME module; verbatim package)
-    varnet_official: bool = False         # use the official fastmri.models.VarNet
+    # ---- DCCNN (Deep Cascade): soft-DC cascades + pluggable backbone, RSS output ----
+    use_dc: bool = False                  # supervised: wrap --arch in a DCCNN (data consistency)
+    dc_cascades: int = 8                  # number of unrolled DC cascades
+    cnn: str = "unet"                     # DCCNN backbone: "unet" | "swin" | "mamba"
+    # ---- official E2E-VarNet (facebookresearch/fastMRI, learned SME; verbatim package) ----
+    varnet_official: bool = False         # internal: set True by the 'varnet' method
+    varnet_cascades: int = 12             # official cascades (official default)
     varnet_sens_chans: int = 8            # SME U-Net channels (official default)
     varnet_sens_pools: int = 4            # SME U-Net pools (official default)
     varnet_unet_chans: int = 18           # cascade NormUnet channels (official default)
@@ -188,13 +189,14 @@ def _add_unrolled(parser: argparse.ArgumentParser) -> None:
                    help="number of coarsest scales that use Mamba (>=1; 1 = bottleneck only)")
     g.add_argument("--mymodel_dstate", type=int, default=16, help="SSM state dim N")
     g.add_argument("--mymodel_expand", type=int, default=1, help="SS2D inner expansion")
-    g.add_argument("--varnet_cascades", type=int, default=8,
-                   help="number of VarNet cascades (--model varnet)")
-    g.add_argument("--varnet_cnn", default="unet", choices=["unet", "swin", "mamba"],
-                   help="VarNet refinement CNN: 'unet', 'swin', or 'mamba'")
-    g.add_argument("--varnet_official", action="store_true",
-                   help="use the official facebookresearch/fastMRI VarNet (learned "
-                        "sensitivity-map estimation). Needs: pip install fastmri --no-deps")
+    # --- DCCNN (Deep Cascade): soft-DC cascades + pluggable backbone, fixed ESPIRiT ---
+    g.add_argument("--dc_cascades", type=int, default=8,
+                   help="number of DCCNN cascades (--method dccnn)")
+    g.add_argument("--cnn", default="unet", choices=["unet", "swin", "mamba"],
+                   help="DCCNN backbone: 'unet', 'swin', or 'mamba'")
+    # --- official E2E-VarNet (facebookresearch/fastMRI, learned SME) (--method varnet) ---
+    g.add_argument("--varnet_cascades", type=int, default=12,
+                   help="official E2E-VarNet cascades (official default 12)")
     g.add_argument("--varnet_sens_chans", type=int, default=8)
     g.add_argument("--varnet_sens_pools", type=int, default=4)
     g.add_argument("--varnet_unet_chans", type=int, default=18)
@@ -273,7 +275,7 @@ def _add_split(parser: argparse.ArgumentParser) -> None:
 
 def _add_eval(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--method", required=True,
-                        choices=["sense", "supervised", "varnet", "ssdu", "zeroshot", "diffusion"],
+                        choices=["sense", "supervised", "dccnn", "varnet", "ssdu", "zeroshot", "diffusion"],
                         help="'sense' is the classical CG-SENSE baseline (no checkpoint)")
     parser.add_argument("--ckpt", default=None,
                         help="path to model .pt (not needed for --method sense)")
@@ -294,11 +296,12 @@ def configure_parser(parser: argparse.ArgumentParser, method: str) -> argparse.A
         parser.add_argument("--save_figs", action="store_true")
     elif method == "supervised":
         _add_unet(parser)
-        parser.add_argument("--varnet_cascades", type=int, default=8,
-                            help="cascades when --use_dc (wraps --arch in a VarNet)")
-    elif method == "varnet":
-        _add_unet(parser)                # unet_chans/pools + loss/ssim_weight
-        _add_unrolled(parser)            # varnet_cascades/varnet_cnn + mymodel_* (mamba CNN)
+        parser.add_argument("--dc_cascades", type=int, default=8,
+                            help="cascades when --use_dc (wraps --arch in a DCCNN)")
+    elif method in ("dccnn", "varnet"):
+        # dccnn: our DC cascade + pluggable backbone (--cnn). varnet: official E2E-VarNet.
+        _add_unet(parser)                # unet_chans/pools (unet/swin backbone) + loss
+        _add_unrolled(parser)            # --cnn/--dc_cascades + mymodel_* + varnet_* flags
         _add_split(parser)
     elif method == "ssdu":
         _add_unrolled(parser)

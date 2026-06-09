@@ -41,8 +41,9 @@ def _run_sense(cfg, args):
 
 
 def _run_supervised(cfg, args):
-    if getattr(cfg, "use_dc", False):       # wrap --arch in a VarNet (data consistency)
-        cfg.varnet_cnn = cfg.arch
+    if getattr(cfg, "use_dc", False):       # wrap --arch in a DCCNN (data consistency)
+        cfg.cnn = cfg.arch
+        cfg.varnet_official = False
         from mrrecon.engine.varnet import VarNetTrainer
         VarNetTrainer(cfg).train()
     else:
@@ -50,7 +51,14 @@ def _run_supervised(cfg, args):
         SupervisedTrainer(cfg).train()
 
 
+def _run_dccnn(cfg, args):
+    cfg.varnet_official = False             # our Deep Cascade (pluggable backbone)
+    from mrrecon.engine.varnet import VarNetTrainer
+    VarNetTrainer(cfg).train()
+
+
 def _run_varnet(cfg, args):
+    cfg.varnet_official = True              # official fastMRI E2E-VarNet (learned SME)
     from mrrecon.engine.varnet import VarNetTrainer
     VarNetTrainer(cfg).train()
 
@@ -94,7 +102,8 @@ def _run_profile(cfg, args):
 COMMANDS = {
     "sense": (_run_sense, "classical CG-SENSE baseline (no training)"),
     "supervised": (_run_supervised, "train the supervised U-Net baseline"),
-    "varnet": (_run_varnet, "train E2E-VarNet (multi-coil, RSS output, no ceiling)"),
+    "dccnn": (_run_dccnn, "train Deep Cascade (DC + unet/swin/mamba backbone, RSS output)"),
+    "varnet": (_run_varnet, "train official E2E-VarNet (learned SME, multi-coil, RSS output)"),
     "ssdu": (_run_ssdu, "train SSDU self-supervised across the dataset"),
     "sscu": (_run_sscu, "train SSCU self-supervised (STUB -- not implemented)"),
     "zeroshot": (_run_zeroshot, "zero-shot (ZS-SSL) self-supervised on one scan"),
