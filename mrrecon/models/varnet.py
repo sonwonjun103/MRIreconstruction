@@ -31,7 +31,6 @@ import torch
 import torch.nn as nn
 
 from ..data.transforms import fft2c, ifft2c
-from .unet import UNet
 
 
 # --------------------------------------------------------------------------- #
@@ -63,17 +62,16 @@ def _build_cnn(cfg):
     # The cascade itself provides the residual (k - soft_dc - model_term), so the
     # refinement CNN must be NON-residual (output a pure correction), matching the
     # E2E-VarNet NormUnet. A residual CNN would inject a spurious E E^H k term.
+    # unet/swin reuse the SAME MONAI backbones as the no-DC supervised path
+    # (in_out_ch=2 for the complex coil-combined image, residual=False because the
+    # cascade supplies the residual) -> a clean "same backbone +/- DC" ablation.
     kind = getattr(cfg, "varnet_cnn", "unet")
     if kind == "unet":
-        return UNet(in_ch=2, out_ch=2, chans=cfg.unet_chans,
-                    num_pools=cfg.unet_pools, residual=False)
+        from .monai_nets import build_monai_unet
+        return build_monai_unet(cfg, in_out_ch=2, residual=False)
     if kind == "swin":
-        from .monai_nets import MonaiSupervised
-        from monai.networks.nets import SwinUNETR
-        feat = cfg.swin_dim if cfg.swin_dim % 12 == 0 else 48
-        net = SwinUNETR(in_channels=2, out_channels=2, spatial_dims=2,
-                        feature_size=feat, drop_rate=cfg.unet_drop)
-        return MonaiSupervised(net, divisor=32, residual=False)
+        from .monai_nets import build_monai_swinunetr
+        return build_monai_swinunetr(cfg, in_out_ch=2, residual=False)
     if kind == "mamba":
         from .mymodel import MambaUNetDenoiser
         return MambaUNetDenoiser(

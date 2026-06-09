@@ -53,24 +53,28 @@ def _io_channels(cfg):
     return 1 if getattr(cfg, "sup_target", "rss") == "rss" else 2
 
 
-def build_monai_unet(cfg):
-    """MONAI 2-D UNet. Depth/width from --unet_pools / --unet_chans."""
+def build_monai_unet(cfg, in_out_ch=None, residual=True):
+    """MONAI 2-D UNet. Depth/width from --unet_pools / --unet_chans.
+
+    ``in_out_ch`` overrides the channel count (the VarNet CNN forces 2 complex
+    channels); ``residual`` toggles the global skip (False inside VarNet, where
+    the cascade provides the residual). Same MONAI backbone in both cases."""
     from monai.networks.nets import UNet
-    ch = _io_channels(cfg)
+    ch = in_out_ch or _io_channels(cfg)
     pools = max(2, cfg.unet_pools)
     channels = tuple(cfg.unet_chans * (2 ** i) for i in range(pools))
     strides = (2,) * (pools - 1)
     net = UNet(spatial_dims=2, in_channels=ch, out_channels=ch,
                channels=channels, strides=strides, num_res_units=2,
                dropout=cfg.unet_drop)
-    return MonaiSupervised(net, divisor=2 ** (pools - 1))
+    return MonaiSupervised(net, divisor=2 ** (pools - 1), residual=residual)
 
 
-def build_monai_swinunetr(cfg):
+def build_monai_swinunetr(cfg, in_out_ch=None, residual=True):
     """MONAI 2-D SwinUNETR. feature_size from --swin_dim (multiple of 12)."""
     from monai.networks.nets import SwinUNETR
-    ch = _io_channels(cfg)
+    ch = in_out_ch or _io_channels(cfg)
     feat = cfg.swin_dim if cfg.swin_dim % 12 == 0 else 48
     net = SwinUNETR(in_channels=ch, out_channels=ch, spatial_dims=2,
                     feature_size=feat, drop_rate=cfg.unet_drop)
-    return MonaiSupervised(net, divisor=32)   # SwinUNETR needs H/W divisible by 32
+    return MonaiSupervised(net, divisor=32, residual=residual)   # SwinUNETR needs H/W div by 32
