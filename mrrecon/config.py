@@ -81,6 +81,8 @@ class Config:
 
     # ---- supervised network ----
     arch: str = "unet"                    # "unet" | "swin" (Transformer)
+    sup_target: str = "rss"               # "rss" (1-ch magnitude, fastMRI-standard) |
+                                          # "sense" (2-ch complex SENSE image)
     loss: str = "l1"                      # "l1" | "l2" | "ssim" | "l1ssim"
     ssim_weight: float = 1.0              # weight of SSIM term in "l1ssim"
     unet_chans: int = 32
@@ -189,6 +191,9 @@ def _add_unet(parser: argparse.ArgumentParser) -> None:
     g = parser.add_argument_group("supervised net")
     g.add_argument("--arch", default="unet", choices=["unet", "swin"],
                    help="supervised backbone (MONAI): 'unet' (UNet) or 'swin' (SwinUNETR)")
+    g.add_argument("--sup_target", default="rss", choices=["rss", "sense"],
+                   help="supervised target: 'rss' (1-ch magnitude, fastMRI-standard) "
+                        "or 'sense' (2-ch complex SENSE image)")
     g.add_argument("--loss", default="l1", choices=["l1", "l2", "ssim", "l1ssim"],
                    help="supervised loss (ssim/l1ssim use 1-SSIM on magnitude)")
     g.add_argument("--ssim_weight", type=float, default=1.0,

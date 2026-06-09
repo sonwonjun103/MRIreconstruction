@@ -48,13 +48,19 @@ class MonaiSupervised(nn.Module):
         return out * std + mean
 
 
+def _io_channels(cfg):
+    """1 channel for the RSS-magnitude target, 2 for the complex SENSE target."""
+    return 1 if getattr(cfg, "sup_target", "rss") == "rss" else 2
+
+
 def build_monai_unet(cfg):
     """MONAI 2-D UNet. Depth/width from --unet_pools / --unet_chans."""
     from monai.networks.nets import UNet
+    ch = _io_channels(cfg)
     pools = max(2, cfg.unet_pools)
     channels = tuple(cfg.unet_chans * (2 ** i) for i in range(pools))
     strides = (2,) * (pools - 1)
-    net = UNet(spatial_dims=2, in_channels=2, out_channels=2,
+    net = UNet(spatial_dims=2, in_channels=ch, out_channels=ch,
                channels=channels, strides=strides, num_res_units=2,
                dropout=cfg.unet_drop)
     return MonaiSupervised(net, divisor=2 ** (pools - 1))
@@ -63,7 +69,8 @@ def build_monai_unet(cfg):
 def build_monai_swinunetr(cfg):
     """MONAI 2-D SwinUNETR. feature_size from --swin_dim (multiple of 12)."""
     from monai.networks.nets import SwinUNETR
+    ch = _io_channels(cfg)
     feat = cfg.swin_dim if cfg.swin_dim % 12 == 0 else 48
-    net = SwinUNETR(in_channels=2, out_channels=2, spatial_dims=2,
+    net = SwinUNETR(in_channels=ch, out_channels=ch, spatial_dims=2,
                     feature_size=feat, drop_rate=cfg.unet_drop)
     return MonaiSupervised(net, divisor=32)   # SwinUNETR needs H/W divisible by 32

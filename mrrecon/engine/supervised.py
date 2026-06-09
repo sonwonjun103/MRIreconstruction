@@ -37,8 +37,9 @@ class SupervisedTrainer:
                                  shuffle=False, num_workers=cfg.num_workers)
 
         self.model = build_supervised(cfg).to(self.device)
-        self.tag = (f"supervised arch={cfg.arch} loss={cfg.loss} | acc={cfg.acc_rate} "
-                    f"acs={cfg.acs_lines} mask={cfg.mask_type} data={'full' if cfg.full_subject else 'central'}")
+        self.tag = (f"supervised arch={cfg.arch} target={cfg.sup_target} loss={cfg.loss} "
+                    f"| acc={cfg.acc_rate} acs={cfg.acs_lines} mask={cfg.mask_type} "
+                    f"data={'full' if cfg.full_subject else 'central'}")
         print(f"[train] {self.tag} | tissue={cfg.tissue} modality={cfg.modality or 'all'} "
               f"| train {len(tr)} / val {len(va)} slices")
         self.optim = torch.optim.Adam(self.model.parameters(), lr=cfg.lr)
@@ -57,8 +58,11 @@ class SupervisedTrainer:
             out = out_t.cpu().numpy()
             tgt_np = tgt.cpu().numpy()
             for b in range(out.shape[0]):
-                recon = np.abs(r2c_np(out[b], axis=0))
-                ref = np.abs(r2c_np(tgt_np[b], axis=0))
+                if out.shape[1] == 1:                       # rss target: magnitude
+                    recon = np.abs(out[b, 0]); ref = np.abs(tgt_np[b, 0])
+                else:                                       # sense target: complex
+                    recon = np.abs(r2c_np(out[b], axis=0))
+                    ref = np.abs(r2c_np(tgt_np[b], axis=0))
                 m = all_metrics(center_crop(ref), center_crop(recon))
                 for k in mets:
                     mets[k].append(m[k])

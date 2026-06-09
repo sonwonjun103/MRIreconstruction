@@ -54,15 +54,20 @@ class SSDUTrainer:
     @torch.no_grad()
     def _validate(self):
         cfg = self.cfg
+        from ..metrics import rss_metrics
         mets = {"ssim": [], "psnr": [], "nmse": [], "nmae": []}
         for i, fpath in enumerate(self.val_files):
-            kspace, sens, _ = read_slice(fpath, crop_size=cfg.crop_size)
+            kspace, sens, rss = read_slice(fpath, crop_size=cfg.crop_size)
             H, W = kspace.shape[1:]
             rng = np.random.default_rng(i + 1)
             omega = undersampling_mask((H, W), cfg.acc_rate, cfg.acs_lines,
                                        cfg.mask_type, rng=rng, vds_power=cfg.vds_power)
             ref, _, recon = recon_unrolled(self.model, kspace, sens, omega, self.device)
-            m = all_metrics(center_crop(ref), center_crop(recon))
+            # model selection on the RSS ground truth (fall back to SENSE if absent)
+            if rss is not None:
+                m = rss_metrics(rss, recon, crop_fn=center_crop)
+            else:
+                m = all_metrics(center_crop(ref), center_crop(recon))
             for k in mets:
                 mets[k].append(m[k])
         result = {k: float(np.nanmean(v)) for k, v in mets.items()}

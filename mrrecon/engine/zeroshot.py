@@ -43,7 +43,8 @@ class ZeroShotTrainer:
         idx = int(np.clip(idx, 0, len(files) - 1))
         self.slice_idx = idx
         self.slice_file = files[idx]
-        self.kspace_slice, self.sens_slice, _ = read_slice(self.slice_file, crop_size=cfg.crop_size)
+        self.kspace_slice, self.sens_slice, self.rss_slice = read_slice(
+            self.slice_file, crop_size=cfg.crop_size)
 
         H, W = self.kspace_slice.shape[1:]
         rng = np.random.default_rng(cfg.seed)
@@ -75,7 +76,13 @@ class ZeroShotTrainer:
     def _image_metrics(self):
         ref, _, recon = recon_unrolled(self.model, self.kspace_slice,
                                        self.sens_slice, self.omega, self.device)
-        return all_metrics(center_crop(ref), center_crop(recon)), recon, ref
+        # report against the RSS ground truth (fall back to SENSE if absent)
+        if self.rss_slice is not None:
+            from ..metrics import rss_metrics
+            m = rss_metrics(self.rss_slice, recon, crop_fn=center_crop)
+        else:
+            m = all_metrics(center_crop(ref), center_crop(recon))
+        return m, recon, ref
 
     def train(self):
         set_seed(self.cfg.seed)

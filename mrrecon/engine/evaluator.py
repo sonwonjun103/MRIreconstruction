@@ -19,19 +19,9 @@ from ..data.loaders import list_slice_files, read_slice
 from ..models import build_supervised, build_unrolled
 from ..models.diffusion import DiffusionUNet, GaussianDiffusion
 from ..metrics import all_metrics
+from ..metrics import match_scale as _match_scale
 from .common import get_device, acc_dir, save_json, center_crop, load_checkpoint
 from .inference import recon_supervised, recon_unrolled, recon_sense, recon_diffusion
-
-
-def _match_scale(ref, x):
-    """Least-squares global scalar that best fits magnitude image ``x`` to
-    ``ref`` (minimises ||a*x - ref||). Removes the arbitrary intensity scale
-    between the normalised-k-space recon and the RSS ground truth."""
-    ref = np.abs(ref).astype(np.float64)
-    x = np.abs(x).astype(np.float64)
-    den = float(np.sum(x * x))
-    a = float(np.sum(ref * x)) / den if den > 0 else 1.0
-    return x * a
 
 
 class Evaluator:
@@ -53,7 +43,9 @@ class Evaluator:
 
         if self.method == "supervised":
             model = build_supervised(self.cfg)
-            self.recon_fn = recon_supervised
+            mode = getattr(self.cfg, "sup_target", "rss")
+            self.recon_fn = (lambda m, k, s, o, d:
+                             recon_supervised(m, k, s, o, d, target_mode=mode))
         elif self.method == "diffusion":
             cfg = self.cfg
             model = DiffusionUNet(in_ch=2, base=cfg.diff_dim)
@@ -93,7 +85,7 @@ class Evaluator:
         rec_title = f"recon (vs SENSE)  ssim={m['ssim']:.3f} psnr={m['psnr']:.2f}"
         if m_rss is not None:
             rec_title += f"\n(vs RSS)  ssim={m_rss['ssim']:.3f} psnr={m_rss['psnr']:.2f}"
-        panels = [(ref, "SENSE reference", vmax)]
+        panels = [(ref, "fully-sampled reference", vmax)]
         if rss is not None:
             panels.append((rss, "RSS ground truth", 0.6 * rss.max()))
         panels += [(zf, zf_title, vmax), (recon, rec_title, vmax)]
@@ -245,23 +237,15 @@ class Evaluator:
                   os.path.join(rdir, f"timing_eval_{self.method}_{self.split}.json"))
         print(f"\neval time : {eval_seconds:.1f}s ({len(files)} slices, "
               f"{eval_seconds/max(len(files),1):.3f}s/slice)")
-        print("=== summary (vs SENSE reference) ===")
-        print(f"zero-filled : SSIM={summary['zero_filled']['ssim']:.4f} "
-              f"PSNR={summary['zero_filled']['psnr']:.3f} "
-              f"NMSE={summary['zero_filled']['nmse']:.5f} "
-              f"NMAE={summary['zero_filled']['nmae']:.5f}")
-        print(f"recon       : SSIM={summary['recon']['ssim']:.4f} "
-              f"PSNR={summary['recon']['psnr']:.3f} "
-              f"NMSE={summary['recon']['nmse']:.5f} "
-              f"NMAE={summary['recon']['nmae']:.5f}")
-        if has_rss:
-            print("=== summary (vs fastMRI RSS ground truth, scale-matched) ===")
-            print(f"zero-filled : SSIM={summary['zero_filled_rss']['ssim']:.4f} "
-                  f"PSNR={summary['zero_filled_rss']['psnr']:.3f} "
-                  f"NMSE={summary['zero_filled_rss']['nmse']:.5f} "
-                  f"NMAE={summary['zero_filled_rss']['nmae']:.5f}")
-            print(f"recon       : SSIM={summary['recon_rss']['ssim']:.4f} "
-                  f"PSNR={summary['recon_rss']['psnr']:.3f} "
-                  f"NMSE={summary['recon_rss']['nmse']:.5f} "
-                  f"NMAE={summary['recon_rss']['nmae']:.5f}")
+        def _line(tag, d):
+            print(f"{tag} : SSIM={d['ssim']:.4f} PSNR={d['psnr']:.3f} "
+                  f"NMSE={d['nmse']:.5f} NMAE={d['nmae']:.5f}")
+
+        if has_rss:                                        # RSS is the primary reference
+            print("=== summary (vs fastMRI RSS ground truth, scale-matched) [PRIMARY] ===")
+            _line("zero-filled", summary["zero_filled_rss"])
+            _line("recon      ", summary["recon_rss"])
+        print("=== summary (vs SENSE reference) [secondary] ===")
+        _line("zero-filled", summary["zero_filled"])
+        _line("recon      ", summary["recon"])
         return summary

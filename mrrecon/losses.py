@@ -25,7 +25,9 @@ class MixL1L2Loss(nn.Module):
 
 
 def _magnitude(x):
-    """(B,2,H,W) real/imag -> (B,1,H,W) magnitude."""
+    """-> (B,1,H,W) magnitude. (B,2,H,W) real/imag -> sqrt; (B,1,H,W) -> |x|."""
+    if x.shape[1] == 1:
+        return x.abs()
     return torch.sqrt(x[:, 0:1] ** 2 + x[:, 1:2] ** 2 + 1e-12)
 
 

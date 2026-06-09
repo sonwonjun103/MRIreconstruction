@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from ..data.transforms import sense_combine_np, c2r_np, r2c_np
+from ..data.transforms import sense_combine_np, c2r_np, r2c_np, rss_np
 from ..models.sense import cg_sense_recon
 
 
@@ -27,8 +27,17 @@ def _prep_inputs(kspace_slice, sens_slice, omega, device):
 
 
 @torch.no_grad()
-def recon_supervised(model, kspace_slice, sens_slice, omega, device):
+def recon_supervised(model, kspace_slice, sens_slice, omega, device, target_mode="rss"):
     model.eval()
+    if target_mode == "rss":
+        scale = np.max(np.abs(kspace_slice))
+        kspace = kspace_slice / scale if scale else kspace_slice
+        ref = rss_np(kspace)                               # fully-sampled RSS
+        zf = rss_np(kspace * omega[None])                  # zero-filled RSS
+        x = torch.from_numpy(zf.astype(np.float32))[None, None].to(device)
+        recon = model(x).cpu().numpy()[0, 0]               # (H,W) magnitude
+        return ref, zf, np.abs(recon)
+    # sense (2-channel complex) target
     _, ref, zf = _prep_inputs(kspace_slice, sens_slice, omega, device)
     x = torch.from_numpy(c2r_np(zf).astype(np.float32))[None].to(device)
     out = model(x).cpu().numpy()[0]

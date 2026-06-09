@@ -61,3 +61,23 @@ def all_metrics(org, recon) -> dict:
     """Convenience: returns {'ssim', 'psnr', 'nmse', 'nmae'} for one image pair."""
     return {"ssim": ssim(org, recon), "psnr": psnr(org, recon),
             "nmse": nmse(org, recon), "nmae": nmae(org, recon)}
+
+
+def match_scale(ref, x):
+    """Least-squares global scalar fitting magnitude image ``x`` to ``ref``
+    (minimises ||a*x - ref||). Removes the arbitrary intensity scale between a
+    normalised-k-space recon and the RSS ground truth before scoring."""
+    ref = np.abs(np.squeeze(ref)).astype(np.float64)
+    x = np.abs(np.squeeze(x)).astype(np.float64)
+    den = float(np.sum(x * x))
+    a = float(np.sum(ref * x)) / den if den > 0 else 1.0
+    return x * a
+
+
+def rss_metrics(rss, recon, crop_fn=None) -> dict:
+    """Metrics of ``recon`` against the RSS ground truth with scale-matching
+    (and optional center-crop applied to both via ``crop_fn``)."""
+    rss = np.abs(np.squeeze(rss)); recon = np.abs(np.squeeze(recon))
+    if crop_fn is not None:
+        rss, recon = crop_fn(rss), crop_fn(recon)
+    return all_metrics(rss, match_scale(rss, recon))

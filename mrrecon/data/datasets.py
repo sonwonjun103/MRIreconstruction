@@ -12,7 +12,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset 
 
-from .transforms import sense_combine_np, c2r_np
+from .transforms import sense_combine_np, c2r_np, rss_np
 from .masks import undersampling_mask, SSDUMaskSplitter
 from .loaders import read_slice
 
@@ -24,26 +24,31 @@ def _normalize(kspace: np.ndarray) -> np.ndarray:
 
 
 class SupervisedDataset(Dataset):
-    """Zero-filled SENSE image -> fully-sampled SENSE image (both 2-channel).
+    """Zero-filled image -> fully-sampled image.
 
-    Takes a list of per-slice .h5 file paths (one split) and loads lazily.
+    ``cfg.sup_target`` selects the coil-combination of the input/target:
+        'rss'   -> 1-channel magnitude (zero-filled RSS -> fully-sampled RSS),
+                   the fastMRI-standard supervised setup
+        'sense' -> 2-channel complex (zero-filled SENSE -> fully-sampled SENSE)
+
     Returns dict with:
-        x_in   : (2,H,W) float32  -- zero-filled SENSE recon (network input)
-        target : (2,H,W) float32  -- fully-sampled SENSE recon (label)
-        omega  : (1,H,W) float32  -- acquisition mask
+        x_in   : (1|2,H,W) float32  -- network input
+        target : (1|2,H,W) float32  -- label
+        omega  : (1,H,W)  float32   -- acquisition mask
     """
 
     def __init__(self, cfg, files, train=True):
         self.cfg = cfg
         self.files = files
         self.train = train
+        self.rss = getattr(cfg, "sup_target", "rss") == "rss"
 
     def __len__(self):
         return len(self.files)
 
     def __getitem__(self, idx):
         kspace, sens, _ = read_slice(self.files[idx], crop_size=self.cfg.crop_size)
-        kspace = _normalize(kspace)                    # (C,H,W) 
+        kspace = _normalize(kspace)                    # (C,H,W)
         H, W = kspace.shape[1:]
 
         # a fresh random mask each epoch when training, deterministic otherwise
@@ -52,12 +57,17 @@ class SupervisedDataset(Dataset):
         omega = undersampling_mask((H, W), self.cfg.acc_rate, self.cfg.acs_lines,
                                    self.cfg.mask_type, rng=rng, vds_power=self.cfg.vds_power)
 
-        target = sense_combine_np(kspace, sens)                 # (H,W) complex
-        x_in = sense_combine_np(kspace * omega[None], sens)     # (H,W) complex
+        if self.rss:
+            target = rss_np(kspace)[None]                       # (1,H,W) magnitude
+            x_in = rss_np(kspace * omega[None])[None]           # (1,H,W) magnitude
+            x_in = x_in.astype(np.float32); target = target.astype(np.float32)
+        else:
+            target = c2r_np(sense_combine_np(kspace, sens)).astype(np.float32)
+            x_in = c2r_np(sense_combine_np(kspace * omega[None], sens)).astype(np.float32)
 
         return {
-            "x_in": torch.from_numpy(c2r_np(x_in).astype(np.float32)),
-            "target": torch.from_numpy(c2r_np(target).astype(np.float32)),
+            "x_in": torch.from_numpy(x_in),
+            "target": torch.from_numpy(target),
             "omega": torch.from_numpy(omega).unsqueeze(0),
         }
 
