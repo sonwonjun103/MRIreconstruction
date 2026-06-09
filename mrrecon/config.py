@@ -60,6 +60,10 @@ class Config:
     mymodel_dstate: int = 16              # SSM state dimension N
     mymodel_expand: int = 1               # SS2D inner expansion (1 = lean, zero-shot friendly)
 
+    # ---- VarNet: multi-coil k-space cascades with RSS output ----
+    varnet_cascades: int = 8              # number of unrolled cascades
+    varnet_cnn: str = "unet"              # refinement CNN: "unet" | "mamba"
+
     # ---- mamba: Mamba-ViT-regularised unrolled net ----
     mamba_dim: int = 128                  # token embedding dim
     mamba_depth: int = 4                  # number of Mamba-ViT blocks
@@ -177,6 +181,10 @@ def _add_unrolled(parser: argparse.ArgumentParser) -> None:
                    help="number of coarsest scales that use Mamba (>=1; 1 = bottleneck only)")
     g.add_argument("--mymodel_dstate", type=int, default=16, help="SSM state dim N")
     g.add_argument("--mymodel_expand", type=int, default=1, help="SS2D inner expansion")
+    g.add_argument("--varnet_cascades", type=int, default=8,
+                   help="number of VarNet cascades (--model varnet)")
+    g.add_argument("--varnet_cnn", default="unet", choices=["unet", "mamba"],
+                   help="VarNet refinement CNN: 'unet' or 'mamba'")
     g.add_argument("--mamba_dim", type=int, default=128)
     g.add_argument("--mamba_depth", type=int, default=4)
     g.add_argument("--mamba_patch", type=int, default=16)
@@ -246,7 +254,7 @@ def _add_split(parser: argparse.ArgumentParser) -> None:
 
 def _add_eval(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--method", required=True,
-                        choices=["sense", "supervised", "ssdu", "zeroshot", "diffusion"],
+                        choices=["sense", "supervised", "varnet", "ssdu", "zeroshot", "diffusion"],
                         help="'sense' is the classical CG-SENSE baseline (no checkpoint)")
     parser.add_argument("--ckpt", default=None,
                         help="path to model .pt (not needed for --method sense)")
@@ -267,6 +275,10 @@ def configure_parser(parser: argparse.ArgumentParser, method: str) -> argparse.A
         parser.add_argument("--save_figs", action="store_true")
     elif method == "supervised":
         _add_unet(parser)
+    elif method == "varnet":
+        _add_unet(parser)                # unet_chans/pools + loss/ssim_weight
+        _add_unrolled(parser)            # varnet_cascades/varnet_cnn + mymodel_* (mamba CNN)
+        _add_split(parser)
     elif method == "ssdu":
         _add_unrolled(parser)
     elif method == "sscu":

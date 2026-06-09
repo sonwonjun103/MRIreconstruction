@@ -145,6 +145,44 @@ class SSDUDataset(Dataset):
         }
 
 
+class VarNetDataset(Dataset):
+    """Multi-coil VarNet samples (supervised, RSS target).
+
+    Returns dict with:
+        masked_kspace : (C,H,W) complex64  -- zero-filled acquired k-space
+        sens          : (C,H,W) complex64  -- ESPIRiT sensitivity maps
+        mask          : (1,H,W) float32    -- acquisition mask Omega
+        target        : (1,H,W) float32    -- fully-sampled RSS ground truth
+    """
+
+    def __init__(self, cfg, files, train=True):
+        self.cfg = cfg
+        self.files = files
+        self.train = train
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx):
+        kspace, sens, _ = read_slice(self.files[idx], crop_size=self.cfg.crop_size)
+        kspace = _normalize(kspace)                     # (C,H,W) complex
+        H, W = kspace.shape[1:]
+
+        seed = None if self.train else (idx + 1)
+        rng = np.random.default_rng(seed)
+        omega = undersampling_mask((H, W), self.cfg.acc_rate, self.cfg.acs_lines,
+                                   self.cfg.mask_type, rng=rng, vds_power=self.cfg.vds_power)
+
+        target = rss_np(kspace)[None].astype(np.float32)        # (1,H,W) full RSS
+        masked = (kspace * omega[None]).astype(np.complex64)
+        return {
+            "masked_kspace": torch.from_numpy(masked),
+            "sens": torch.from_numpy(sens),
+            "mask": torch.from_numpy(omega).unsqueeze(0).float(),
+            "target": torch.from_numpy(target),
+        }
+
+
 class ZeroShotDataset(Dataset):
     """ZS-SSL: many (Theta, Lambda) realisations of a *single* scan.
 

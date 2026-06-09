@@ -21,7 +21,8 @@ from ..models.diffusion import DiffusionUNet, GaussianDiffusion
 from ..metrics import all_metrics
 from ..metrics import match_scale as _match_scale
 from .common import get_device, acc_dir, save_json, center_crop, load_checkpoint
-from .inference import recon_supervised, recon_unrolled, recon_sense, recon_diffusion
+from .inference import (recon_supervised, recon_unrolled, recon_sense,
+                        recon_diffusion, recon_varnet)
 
 
 class Evaluator:
@@ -41,7 +42,11 @@ class Evaluator:
                              recon_sense(k, s, o, d, cfg.sense_lam, cfg.sense_cg_iter))
             return None
 
-        if self.method == "supervised":
+        if self.method == "varnet":
+            from ..models.varnet import VarNet
+            model = VarNet(self.cfg)
+            self.recon_fn = recon_varnet
+        elif self.method == "supervised":
             model = build_supervised(self.cfg)
             mode = getattr(self.cfg, "sup_target", "rss")
             self.recon_fn = (lambda m, k, s, o, d:

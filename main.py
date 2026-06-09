@@ -45,6 +45,11 @@ def _run_supervised(cfg, args):
     SupervisedTrainer(cfg).train()
 
 
+def _run_varnet(cfg, args):
+    from mrrecon.engine.varnet import VarNetTrainer
+    VarNetTrainer(cfg).train()
+
+
 def _run_ssdu(cfg, args):
     from mrrecon.engine.ssdu import SSDUTrainer
     SSDUTrainer(cfg).train()
@@ -84,6 +89,7 @@ def _run_profile(cfg, args):
 COMMANDS = {
     "sense": (_run_sense, "classical CG-SENSE baseline (no training)"),
     "supervised": (_run_supervised, "train the supervised U-Net baseline"),
+    "varnet": (_run_varnet, "train E2E-VarNet (multi-coil, RSS output, no ceiling)"),
     "ssdu": (_run_ssdu, "train SSDU self-supervised across the dataset"),
     "sscu": (_run_sscu, "train SSCU self-supervised (STUB -- not implemented)"),
     "zeroshot": (_run_zeroshot, "zero-shot (ZS-SSL) self-supervised on one scan"),

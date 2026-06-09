@@ -277,9 +277,10 @@ class MambaUNetDenoiser(nn.Module):
     """
 
     def __init__(self, in_ch=2, chans=32, pools=3, ssm_blocks=2, mamba_levels=1,
-                 d_state=16, expand=1):
+                 d_state=16, expand=1, residual=True):
         super().__init__()
         self.pools = pools
+        self.residual = residual
         self.in_conv = nn.Conv2d(in_ch, chans, 3, padding=1)
         self.iter_mlp = nn.Sequential(nn.Linear(1, chans), nn.SiLU(inplace=True),
                                       nn.Linear(chans, 2 * chans))
@@ -313,7 +314,9 @@ class MambaUNetDenoiser(nn.Module):
         nn.init.zeros_(self.out_conv.weight)
         nn.init.zeros_(self.out_conv.bias)
 
-    def forward(self, x, t):
+    def forward(self, x, t=None):
+        if t is None:                                                  # no unrolled index (e.g. VarNet)
+            t = x.new_tensor(0.5)
         mean = x.mean((1, 2, 3), keepdim=True)
         std = x.std((1, 2, 3), keepdim=True) + 1e-12
         xn = (x - mean) / std
@@ -339,7 +342,8 @@ class MambaUNetDenoiser(nn.Module):
             f = dec(fuse(torch.cat([f, s], dim=1)))
 
         out = self.out_conv(f)[..., :h, :w]
-        return (xn + out) * std + mean                                 # residual, de-standardised
+        out = (xn + out) if self.residual else out
+        return out * std + mean                                        # de-standardised
 
 
 # --------------------------------------------------------------------------- #
