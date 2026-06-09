@@ -114,7 +114,7 @@ class RSTB(nn.Module):
             for i in range(n_blocks)])
         self.conv = nn.Conv2d(dim, dim, 3, padding=1)
 
-    def forward(self, x, H, W):
+    def forward(self, x, H, W): 
         res = x
         for blk in self.blocks:
             x = blk(x, H, W)

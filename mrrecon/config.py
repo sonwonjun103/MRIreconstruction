@@ -64,6 +64,12 @@ class Config:
     use_dc: bool = False                  # supervised: wrap --arch in VarNet (data consistency)
     varnet_cascades: int = 8              # number of unrolled cascades
     varnet_cnn: str = "unet"              # refinement CNN: "unet" | "swin" | "mamba"
+    # official facebookresearch/fastMRI VarNet (learned SME module; verbatim package)
+    varnet_official: bool = False         # use the official fastmri.models.VarNet
+    varnet_sens_chans: int = 8            # SME U-Net channels (official default)
+    varnet_sens_pools: int = 4            # SME U-Net pools (official default)
+    varnet_unet_chans: int = 18           # cascade NormUnet channels (official default)
+    varnet_unet_pools: int = 4            # cascade NormUnet pools (official default)
 
     # ---- mamba: Mamba-ViT-regularised unrolled net ----
     mamba_dim: int = 128                  # token embedding dim
@@ -186,6 +192,13 @@ def _add_unrolled(parser: argparse.ArgumentParser) -> None:
                    help="number of VarNet cascades (--model varnet)")
     g.add_argument("--varnet_cnn", default="unet", choices=["unet", "swin", "mamba"],
                    help="VarNet refinement CNN: 'unet', 'swin', or 'mamba'")
+    g.add_argument("--varnet_official", action="store_true",
+                   help="use the official facebookresearch/fastMRI VarNet (learned "
+                        "sensitivity-map estimation). Needs: pip install fastmri --no-deps")
+    g.add_argument("--varnet_sens_chans", type=int, default=8)
+    g.add_argument("--varnet_sens_pools", type=int, default=4)
+    g.add_argument("--varnet_unet_chans", type=int, default=18)
+    g.add_argument("--varnet_unet_pools", type=int, default=4)
     g.add_argument("--mamba_dim", type=int, default=128)
     g.add_argument("--mamba_depth", type=int, default=4)
     g.add_argument("--mamba_patch", type=int, default=16)

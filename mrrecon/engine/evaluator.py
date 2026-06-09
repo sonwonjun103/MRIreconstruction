@@ -44,10 +44,10 @@ class Evaluator:
 
         if self.method == "varnet" or (self.method == "supervised"
                                        and getattr(self.cfg, "use_dc", False)):
-            from ..models.varnet import VarNet
+            from ..models.varnet import build_varnet
             if self.method == "supervised":
                 self.cfg.varnet_cnn = self.cfg.arch     # --arch is the VarNet CNN
-            model = VarNet(self.cfg)
+            model = build_varnet(self.cfg)
             self.recon_fn = recon_varnet
         elif self.method == "supervised":
             model = build_supervised(self.cfg)

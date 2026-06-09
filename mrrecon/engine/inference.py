@@ -72,7 +72,6 @@ def recon_varnet(model, kspace_slice, sens_slice, omega, device):
     """E2E-VarNet: multi-coil k-space -> RSS image. Returns RSS (reference,
     zero-filled, reconstruction) -- all already in the RSS domain."""
     from ..data.transforms import rss_np
-    from ..models.varnet import kspace_to_rss
     model.eval()
     scale = np.max(np.abs(kspace_slice))
     kspace = kspace_slice / scale if scale else kspace_slice
@@ -81,7 +80,7 @@ def recon_varnet(model, kspace_slice, sens_slice, omega, device):
     mk = _to_complex_tensor((kspace * omega[None]).astype(np.complex64), device)[None]
     sens = _to_complex_tensor(sens_slice, device)[None]
     mask = torch.from_numpy(omega.astype(np.float32))[None, None].to(device)
-    recon = kspace_to_rss(model(mk, sens, mask)).cpu().numpy()[0]
+    recon = model.reconstruct(mk, sens, mask).cpu().numpy()[0]
     return ref, zf, np.abs(recon)
 
 

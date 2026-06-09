@@ -122,3 +122,41 @@ class VarNet(nn.Module):
     def reconstruct(self, masked_kspace, sens, mask):
         """-> RSS magnitude image (B,H,W)."""
         return kspace_to_rss(self.forward(masked_kspace, sens, mask))
+
+
+class OfficialVarNet(nn.Module):
+    """Thin wrapper around the official facebookresearch/fastMRI ``VarNet``
+    (verbatim ``fastmri.models.VarNet``, including the learned Sensitivity-Map
+    Estimation module). Adapts our calling convention -- complex k-space
+    (B,C,H,W), our (B,1,H,W) mask -- to the official one (real-last (B,C,H,W,2)
+    k-space, bool (B,1,1,W,1) mask) and returns the RSS image (B,H,W).
+
+    The official net estimates sensitivity maps internally from the ACS lines, so
+    the precomputed ESPIRiT ``sens`` argument is ignored. Install with
+    ``pip install fastmri --no-deps`` (we already provide torch/numpy/h5py)."""
+
+    def __init__(self, cfg):
+        super().__init__()
+        from fastmri.models import VarNet as _FastmriVarNet
+        self.acs = cfg.acs_lines
+        self.net = _FastmriVarNet(
+            num_cascades=cfg.varnet_cascades,
+            sens_chans=getattr(cfg, "varnet_sens_chans", 8),
+            sens_pools=getattr(cfg, "varnet_sens_pools", 4),
+            chans=getattr(cfg, "varnet_unet_chans", 18),
+            pools=getattr(cfg, "varnet_unet_pools", 4))
+
+    def reconstruct(self, masked_kspace, sens, mask):
+        import torch as _t
+        B, _, _, W = masked_kspace.shape
+        ks = _t.view_as_real(masked_kspace.contiguous())        # (B,C,H,W,2)
+        prof = (mask[:, :, 0, :] > 0).reshape(B, 1, 1, W, 1)    # (B,1,1,W,1) bool
+        return self.net(ks, prof, num_low_frequencies=self.acs)  # (B,H,W) RSS
+
+    def forward(self, masked_kspace, sens, mask):
+        return self.reconstruct(masked_kspace, sens, mask)
+
+
+def build_varnet(cfg):
+    """Official fastMRI VarNet if ``--varnet_official`` else our VarNet."""
+    return OfficialVarNet(cfg) if getattr(cfg, "varnet_official", False) else VarNet(cfg)

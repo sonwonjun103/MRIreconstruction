@@ -18,7 +18,7 @@ from torch.utils.data import DataLoader
 
 from ..data.loaders import list_slice_files
 from ..data.datasets import VarNetDataset
-from ..models.varnet import VarNet, kspace_to_rss
+from ..models.varnet import build_varnet
 from ..losses import SupervisedLoss
 from ..metrics import all_metrics
 from .common import (save_curves, save_mask_preview, set_seed, get_device, acc_dir,
@@ -39,8 +39,9 @@ class VarNetTrainer:
                                    num_workers=cfg.num_workers)
         self.val_dl = DataLoader(VarNetDataset(cfg, va, train=False),
                                  batch_size=1, shuffle=False, num_workers=cfg.num_workers)
-        self.model = VarNet(cfg).to(self.device)
-        self.tag = (f"varnet cnn={cfg.varnet_cnn} cascades={cfg.varnet_cascades} "
+        self.model = build_varnet(cfg).to(self.device)
+        impl = "official" if getattr(cfg, "varnet_official", False) else f"cnn={cfg.varnet_cnn}"
+        self.tag = (f"varnet {impl} cascades={cfg.varnet_cascades} "
                     f"loss={cfg.loss} | acc={cfg.acc_rate} acs={cfg.acs_lines} "
                     f"mask={cfg.mask_type} data={'full' if cfg.full_subject else 'central'}")
         print(f"[train] {self.tag} | tissue={cfg.tissue} modality={cfg.modality or 'all'} "
@@ -52,7 +53,7 @@ class VarNetTrainer:
         mk = batch["masked_kspace"].to(self.device)
         sens = batch["sens"].to(self.device)
         mask = batch["mask"].to(self.device)
-        rss = kspace_to_rss(self.model(mk, sens, mask)).unsqueeze(1)   # (B,1,H,W)
+        rss = self.model.reconstruct(mk, sens, mask).unsqueeze(1)      # (B,1,H,W)
         return rss
 
     @torch.no_grad()
