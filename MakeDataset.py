@@ -1,9 +1,13 @@
 """Build train / val / test reconstruction datasets from raw fastMRI files.
 
-Each split comes from its OWN fastMRI source (no subject-splitting):
-    train <- the existing *_multicoil_train folder
-    val   <- *_multicoil_val   (auto-extracted from the .tar.xz if needed)
-    test  <- *_multicoil_test  (auto-extracted from the .tar.xz if needed)
+Split mapping (the fastMRI *test* set has no ground truth, so it is not used for
+metrics; instead the fastMRI *val* set becomes our held-out test, and the
+training-time validation is carved out of the train volumes):
+    our train <- fastMRI *_multicoil_train  minus a volume-disjoint holdout
+    our val   <- that holdout  (--val_holdout, default 0.1)  -> model selection
+    our test  <- fastMRI *_multicoil_val  (has reconstruction_rss / GT)
+    (fastMRI *_multicoil_test is ignored -- no GT; build it separately only for
+     inference if ever needed.)
 
 Output: one HDF5 file per slice, with tissue folders at the data root::
 
@@ -152,16 +156,9 @@ def save_slice(out_dir, volume, sidx, kspace_slice, rss_slice, save_png):
 
 
 # --------------------------------------------------------------------------- #
-# build one (tissue, split)
+# build a given list of volumes into our {tissue}/{out_split}
 # --------------------------------------------------------------------------- #
-def build_split(tissue, split, slices_per_vol, save_png, limit=0):
-    files, src = resolve_source(tissue, split)
-    out_dir = os.path.join(SAVE_ROOT, tissue, split)
-    if not files:
-        print(f"  [{tissue}/{split}] source not available yet -- skipped "
-              f"(looked for {SOURCES[tissue][split]} + .tar.xz). Re-run after download.")
-        return None
-
+def filter_shape(files, tissue):
     want = KEEP_SHAPE[tissue]
     vols = []
     for fp in files:
@@ -171,17 +168,17 @@ def build_split(tissue, split, slices_per_vol, save_png, limit=0):
                     vols.append(fp)
         except Exception:
             continue
-    if limit:
-        vols = vols[:limit]
+    return vols
 
+
+def build_volumes(tissue, out_split, vols, slices_per_vol, save_png):
+    out_dir = os.path.join(SAVE_ROOT, tissue, out_split)
     if os.path.isdir(out_dir):
         shutil.rmtree(out_dir)
     os.makedirs(out_dir, exist_ok=True)
 
-    print(f"  [{tissue}/{split}] source '{src}': {len(vols)}/{len(files)} volumes "
-          f"match shape {want}")
     count, with_gt, used = 0, 0, []
-    for fp in tqdm.tqdm(vols, desc=f"{tissue}/{split}"):
+    for fp in tqdm.tqdm(vols, desc=f"{tissue}/{out_split}"):
         volume = os.path.splitext(os.path.basename(fp))[0]
         with h5.File(fp, "r") as f:
             kspace = f["kspace"][:]
@@ -194,36 +191,68 @@ def build_split(tissue, split, slices_per_vol, save_png, limit=0):
             count += 1
         used.append(volume)
 
-    note = "" if with_gt == len(vols) else f"  (WARNING: {len(vols) - with_gt} volumes have NO reconstruction_rss / GT)"
+    note = "" if with_gt == len(vols) else \
+        f"  (WARNING: {len(vols) - with_gt} volumes have NO reconstruction_rss / GT)"
     print(f"  -> {out_dir}: {count} slices from {len(used)} volumes; "
           f"{with_gt}/{len(vols)} with GT{note}")
-    return {"split": split, "source": src, "slices": count,
-            "volumes": len(used), "volumes_with_gt": with_gt}
+    return {"slices": count, "volumes": len(used), "volumes_with_gt": with_gt}
 
 
 def main():
     ap = argparse.ArgumentParser(description="Build fastMRI train/val/test datasets")
     ap.add_argument("--tissue", default="both", choices=["knee", "brain", "both"])
-    ap.add_argument("--splits", nargs="+", default=["train", "val", "test"],
-                    choices=["train", "val", "test"])
     ap.add_argument("--slices_per_vol", type=int, default=0,
                     help="0 = ALL slices per volume (default); N>0 = central N slices")
+    ap.add_argument("--val_holdout", type=float, default=0.1,
+                    help="fraction of TRAIN volumes held out (volume-disjoint) as our "
+                         "validation set for model selection")
+    ap.add_argument("--seed", type=int, default=1234, help="train/val holdout shuffle seed")
     ap.add_argument("--save_png", action="store_true",
                     help="also write a magnitude PNG preview per slice")
     ap.add_argument("--limit", type=int, default=0,
-                    help="process only the first N volumes per split (debug)")
+                    help="process only the first N volumes per built split (debug)")
     args = ap.parse_args()
 
     tissues = ["knee", "brain"] if args.tissue == "both" else [args.tissue]
     for tissue in tissues:
         print(f"\n=== {tissue} -> {os.path.join(SAVE_ROOT, tissue)}/ "
-              f"(slices_per_vol={args.slices_per_vol or 'ALL'}) ===")
+              f"(slices_per_vol={args.slices_per_vol or 'ALL'}, val_holdout={args.val_holdout}) ===")
         manifest = {"tissue": tissue, "slices_per_vol": args.slices_per_vol,
-                    "shape": list(KEEP_SHAPE[tissue]), "splits": {}}
-        for split in args.splits:
-            info = build_split(tissue, split, args.slices_per_vol, args.save_png, args.limit)
-            if info:
-                manifest["splits"][split] = info
+                    "val_holdout": args.val_holdout, "seed": args.seed,
+                    "shape": list(KEEP_SHAPE[tissue]),
+                    "mapping": "train/val <- fastMRI train (holdout); test <- fastMRI val (GT)",
+                    "splits": {}}
+
+        # our train + val  <-  fastMRI train, volume-disjoint holdout
+        train_files, src = resolve_source(tissue, "train")
+        if train_files:
+            vols = filter_shape(train_files, tissue)
+            np.random.default_rng(args.seed).shuffle(vols)
+            n_val = max(1, int(round(len(vols) * args.val_holdout))) if len(vols) > 1 else 0
+            val_vols, train_vols = vols[:n_val], vols[n_val:]
+            if args.limit:
+                train_vols, val_vols = train_vols[:args.limit], val_vols[:max(1, args.limit // 5)]
+            print(f"  [train src '{src}'] {len(vols)} vols -> train {len(train_vols)} / val {len(val_vols)}")
+            manifest["splits"]["train"] = build_volumes(tissue, "train", train_vols,
+                                                        args.slices_per_vol, args.save_png)
+            manifest["splits"]["val"] = build_volumes(tissue, "val", val_vols,
+                                                      args.slices_per_vol, args.save_png)
+        else:
+            print(f"  [train] fastMRI train source not found for {tissue} -- skipped")
+
+        # our test  <-  fastMRI val (has GT)
+        val_files, src = resolve_source(tissue, "val")
+        if val_files:
+            test_vols = filter_shape(val_files, tissue)
+            if args.limit:
+                test_vols = test_vols[:args.limit]
+            print(f"  [test  src '{src}' = fastMRI val] {len(test_vols)} volumes")
+            manifest["splits"]["test"] = build_volumes(tissue, "test", test_vols,
+                                                       args.slices_per_vol, args.save_png)
+        else:
+            print(f"  [test] fastMRI val source not available yet for {tissue} "
+                  f"(still downloading?) -- skipped; re-run later")
+
         if manifest["splits"]:
             os.makedirs(os.path.join(SAVE_ROOT, tissue), exist_ok=True)
             with open(os.path.join(SAVE_ROOT, tissue, "manifest.json"), "w") as f:
