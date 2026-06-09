@@ -66,15 +66,24 @@ def available_modalities(data_root: str, tissue: str, split: str = "train", full
     return sorted(mods)
 
 
-def read_slice(path: str):
+def read_slice(path: str, crop_size: int = 0):
     """Read one slice file -> (kspace (C,H,W) complex, sens (C,H,W) complex,
-    rss (h,w) float or None)."""
+    rss (h,w) float or None).
+
+    ``crop_size > 0`` crops k-space + sens to (crop_size, crop_size) in the image
+    domain (removes readout oversampling and trims the phase FOV, matching the
+    fastMRI ground-truth resolution). 0 = no crop (native size).
+    """
     with h5.File(path, "r") as f:
         kspace = f["kspace"][:]
         sens = f["sens_map"][:]
         rss = f["rss"][:] if "rss" in f else None
-    return (np.ascontiguousarray(kspace), np.ascontiguousarray(sens),
-            None if rss is None else np.ascontiguousarray(rss))
+    kspace = np.ascontiguousarray(kspace)
+    sens = np.ascontiguousarray(sens)
+    if crop_size and crop_size > 0:
+        from .transforms import remove_oversampling
+        kspace, sens = remove_oversampling(kspace, sens, crop_size)
+    return (kspace, sens, None if rss is None else np.ascontiguousarray(rss))
 
 
 def peek_shape(data_root: str, tissue: str, split: str = "train", full: bool = False):

@@ -9,13 +9,13 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from ..data.loaders import list_slice_files
+from ..data.loaders import list_slice_files, read_slice
 from ..data.datasets import SupervisedDataset
 from ..models import build_supervised
 from ..losses import SupervisedLoss
 from ..metrics import all_metrics
-from .common import (save_curves, set_seed, get_device, acc_dir, save_checkpoint, save_json,
-                     center_crop)
+from .common import (save_curves, save_mask_preview, set_seed, get_device, acc_dir,
+                     save_checkpoint, save_json, center_crop)
 from ..data.transforms import r2c_np
 
 
@@ -71,6 +71,8 @@ class SupervisedTrainer:
         self._build()
         rdir = acc_dir(self.cfg)
         save_json(self.cfg.to_dict(), os.path.join(rdir, "config.json"))
+        k0, _, _ = read_slice(self.train_ds.files[0], crop_size=self.cfg.crop_size)
+        save_mask_preview(rdir, self.cfg, k0.shape[1:])
 
         history, best = [], -1.0
         n = len(self.train_dl)

@@ -42,7 +42,7 @@ class SupervisedDataset(Dataset):
         return len(self.files)
 
     def __getitem__(self, idx):
-        kspace, sens, _ = read_slice(self.files[idx])
+        kspace, sens, _ = read_slice(self.files[idx], crop_size=self.cfg.crop_size)
         kspace = _normalize(kspace)                    # (C,H,W) 
         H, W = kspace.shape[1:]
 
@@ -79,7 +79,7 @@ class DiffusionDataset(Dataset):
         return len(self.files)
 
     def __getitem__(self, idx):
-        kspace, sens, _ = read_slice(self.files[idx])
+        kspace, sens, _ = read_slice(self.files[idx], crop_size=self.cfg.crop_size)
         kspace = _normalize(kspace)
         img = sense_combine_np(kspace, sens)                    # (H,W) complex
         scale = np.max(np.abs(img))
@@ -109,7 +109,7 @@ class SSDUDataset(Dataset):
         return len(self.files)
 
     def __getitem__(self, idx):
-        kspace, sens, _ = read_slice(self.files[idx])
+        kspace, sens, _ = read_slice(self.files[idx], crop_size=self.cfg.crop_size)
         kspace = _normalize(kspace)                    # (C,H,W)
         H, W = kspace.shape[1:]
 

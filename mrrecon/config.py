@@ -32,6 +32,8 @@ class Config:
     max_slices: int = -1                  # -1 = use all; >0 = subset (debug/speed)
     full_subject: bool = False            # True -> use {tissue}_full (all slices/subject);
                                           # False -> {tissue} (central slices only)
+    crop_size: int = 0                    # >0: crop kspace+sens to NxN in image domain
+                                          # (removes readout oversampling, matches GT). 0=off
 
     # ---- undersampling (the *acquisition* mask Omega) ----
     acc_rate: int = 4
@@ -50,9 +52,13 @@ class Config:
     mu: float = 0.05
     nb_unroll_blocks: int = 10
 
-    # ---- mymodel: U-Net-regularised unrolled net ----
-    mymodel_chans: int = 32
-    mymodel_pools: int = 3
+    # ---- mymodel: hierarchical Mamba-regularised unrolled net (ZS-MambaRecon) ----
+    mymodel_chans: int = 32               # base feature width C of the denoiser
+    mymodel_pools: int = 3                # U-shape depth (number of 2x downsamplings)
+    mymodel_ssm_blocks: int = 2           # RSSB (Mamba) blocks per coarse stage
+    mymodel_mamba_levels: int = 1         # how many coarsest scales use Mamba (>=1)
+    mymodel_dstate: int = 16              # SSM state dimension N
+    mymodel_expand: int = 1               # SS2D inner expansion (1 = lean, zero-shot friendly)
 
     # ---- mamba: Mamba-ViT-regularised unrolled net ----
     mamba_dim: int = 128                  # token embedding dim
@@ -127,6 +133,9 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     g.add_argument("--full_subject", action="store_true",
                    help="use the full-subject dataset ({tissue}_full, all slices) "
                         "instead of the central-slice one ({tissue})")
+    g.add_argument("--crop_size", type=int, default=0,
+                   help="crop k-space+sens to NxN in image domain before the model "
+                        "(removes readout oversampling, matches 320x320 GT). e.g. 320; 0=off")
     g.add_argument("--mode", default="central", choices=["central", "full"],
                    help="dataset variant: 'central' ({tissue}) or 'full' "
                         "({tissue}_full). Same meaning as --full_subject.")
@@ -150,14 +159,22 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
 
 def _add_unrolled(parser: argparse.ArgumentParser) -> None:
     g = parser.add_argument_group("unrolled")
-    g.add_argument("--model", default="ssdu", choices=["ssdu", "mymodel", "mamba"],
-                   help="regulariser: 'ssdu' (ResNet), 'mymodel' (U-Net), or 'mamba' (Mamba-ViT)")
+    g.add_argument("--model", default="ssdu",
+                   choices=["ssdu", "mymodel", "unetunroll", "mamba"],
+                   help="regulariser: 'ssdu' (ResNet), 'mymodel' (proposed hierarchical "
+                        "Mamba), 'unetunroll' (legacy U-Net), or 'mamba' (Mamba-ViT baseline)")
     g.add_argument("--res_blocks", type=int, default=15)
     g.add_argument("--cg_iter", type=int, default=10)
     g.add_argument("--mu", type=float, default=0.05)
     g.add_argument("--nb_unroll_blocks", type=int, default=10)
-    g.add_argument("--mymodel_chans", type=int, default=32)
-    g.add_argument("--mymodel_pools", type=int, default=3)
+    g.add_argument("--mymodel_chans", type=int, default=32, help="base feature width C")
+    g.add_argument("--mymodel_pools", type=int, default=3, help="U-shape depth")
+    g.add_argument("--mymodel_ssm_blocks", type=int, default=2,
+                   help="RSSB (Mamba) blocks per coarse stage")
+    g.add_argument("--mymodel_mamba_levels", type=int, default=1,
+                   help="number of coarsest scales that use Mamba (>=1; 1 = bottleneck only)")
+    g.add_argument("--mymodel_dstate", type=int, default=16, help="SSM state dim N")
+    g.add_argument("--mymodel_expand", type=int, default=1, help="SS2D inner expansion")
     g.add_argument("--mamba_dim", type=int, default=128)
     g.add_argument("--mamba_depth", type=int, default=4)
     g.add_argument("--mamba_patch", type=int, default=16)

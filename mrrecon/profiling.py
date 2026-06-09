@@ -44,8 +44,11 @@ ALL_METHODS = ["sense", "supervised", "ssdu", "mymodel", "mamba", "diffusion"]
 def peek_hw(cfg):
     """Read (H, W) and the train slice count from the per-slice dataset."""
     from .data.loaders import peek_shape, list_slice_files
-    _, h, w = peek_shape(cfg.data_root, cfg.tissue, "train")
-    n = len(list_slice_files(cfg.data_root, cfg.tissue, "train"))
+    full = getattr(cfg, "full_subject", False)
+    _, h, w = peek_shape(cfg.data_root, cfg.tissue, "train", full)
+    n = len(list_slice_files(cfg.data_root, cfg.tissue, "train", full=full))
+    if getattr(cfg, "crop_size", 0) > 0:          # model sees the cropped size
+        h = w = cfg.crop_size
     return int(h), int(w), int(n)
 
 

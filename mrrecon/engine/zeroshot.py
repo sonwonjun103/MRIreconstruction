@@ -25,8 +25,8 @@ from ..data.masks import undersampling_mask
 from ..models import build_unrolled
 from ..losses import MixL1L2Loss
 from ..metrics import all_metrics
-from .common import (save_curves, set_seed, get_device, acc_dir, save_checkpoint, save_json,
-                     center_crop, load_checkpoint)
+from .common import (save_curves, save_mask_preview, set_seed, get_device, acc_dir,
+                     save_checkpoint, save_json, center_crop, load_checkpoint)
 from .inference import recon_unrolled
 
 
@@ -43,7 +43,7 @@ class ZeroShotTrainer:
         idx = int(np.clip(idx, 0, len(files) - 1))
         self.slice_idx = idx
         self.slice_file = files[idx]
-        self.kspace_slice, self.sens_slice, _ = read_slice(self.slice_file)
+        self.kspace_slice, self.sens_slice, _ = read_slice(self.slice_file, crop_size=cfg.crop_size)
 
         H, W = self.kspace_slice.shape[1:]
         rng = np.random.default_rng(cfg.seed)
@@ -85,10 +85,12 @@ class ZeroShotTrainer:
         self.tag = f"zeroshot model={self.cfg.model} | acc={self.cfg.acc_rate} mask={self.cfg.mask_type}"
         print(f"[train] {self.tag} | fitting {self.cfg.tissue} "
               f"{self.cfg.modality or ''} {self.split} slice {self.slice_idx}")
+        save_mask_preview(rdir, self.cfg, self.kspace_slice.shape[1:])
 
         history = []
         best_val, best_epoch, since_improve = float("inf"), 0, 0
         best_path = os.path.join(rdir, "best.pt")
+        last_path = os.path.join(rdir, "last.pt")
 
         train_t0 = time.time()
         for epoch in range(self.cfg.epochs):
@@ -122,6 +124,7 @@ class ZeroShotTrainer:
                       f"{os.path.abspath(best_path)}")
             else:
                 since_improve += 1
+            save_checkpoint(self.model, self.cfg, last_path, extra={"epoch": epoch + 1})
             save_json(history, os.path.join(rdir, "history.json"))
             save_curves(history, os.path.join(rdir, "curves.png"),
                         title=f"{self.cfg.run_name} | {self.tag}")
@@ -153,6 +156,7 @@ class ZeroShotTrainer:
         print(f"  train time     : {train_seconds:.1f}s ({len(history)} epochs)")
         print(f"  inference time : {inference_seconds:.3f}s")
         print(f"  best.pt : {os.path.abspath(best_path)}")
+        print(f"  last.pt : {os.path.abspath(last_path)}")
         print(f"  recon   : {os.path.abspath(os.path.join(rdir, 'recon.npy'))}")
         return img
 

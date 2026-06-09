@@ -48,6 +48,32 @@ def rss_np(kspace: np.ndarray) -> np.ndarray:
     return np.sqrt(np.sum(np.abs(coil_imgs) ** 2, axis=0))
 
 
+def center_crop_2d(arr: np.ndarray, size) -> np.ndarray:
+    """Center-crop the last two axes to (size, size) (or (h,w) if size is a tuple)."""
+    sh, sw = (size, size) if np.isscalar(size) else size
+    h, w = arr.shape[-2:]
+    sh, sw = min(sh, h), min(sw, w)
+    top, left = (h - sh) // 2, (w - sw) // 2
+    return arr[..., top:top + sh, left:left + sw]
+
+
+def remove_oversampling(kspace: np.ndarray, sens: np.ndarray, size=320):
+    """Crop a multi-coil slice to (size,size) in the IMAGE domain.
+
+    IFFT -> center-crop coil images -> FFT back gives k-space whose recon matches
+    the fastMRI ground truth: readout oversampling (e.g. 640->320) is removed and
+    the phase FOV is trimmed (e.g. 368->320). Sensitivity maps (image-domain) are
+    cropped the same way so SENSE stays consistent.
+
+    kspace (C,H,W) complex, sens (C,H,W) complex -> both (C,size,size).
+    """
+    coil = center_crop_2d(ifft2c_np(kspace), size)        # (C,size,size) complex image
+    kspace_c = fft2c_np(coil)                             # (C,size,size) k-space
+    sens_c = center_crop_2d(sens, size)
+    return (np.ascontiguousarray(kspace_c).astype(kspace.dtype),
+            np.ascontiguousarray(sens_c).astype(sens.dtype))
+
+
 # --------------------------------------------------------------------------- #
 # torch (used inside the network / data-consistency, on GPU, complex tensors)
 # --------------------------------------------------------------------------- #

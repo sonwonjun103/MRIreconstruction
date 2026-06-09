@@ -123,6 +123,35 @@ def save_curves(history, path: str, title: str = None):
     plt.close(fig)
 
 
+def save_mask_preview(rdir, cfg, shape_hw, n: int = 4, fname: str = "train_masks.png"):
+    """Save a few example acquisition masks (Omega) used during training -> PNG.
+
+    Shows n random masks at the training resolution plus the mean per-column
+    sampling probability, so you can see the pattern (random / gaussian1d / vds)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from ..data.masks import undersampling_mask
+
+    H, W = shape_hw
+    masks = [undersampling_mask((H, W), cfg.acc_rate, cfg.acs_lines, cfg.mask_type,
+                                rng=np.random.default_rng(i + 1), vds_power=cfg.vds_power)
+             for i in range(n)]
+    fig, ax = plt.subplots(1, n + 1, figsize=(3 * (n + 1), 3.4))
+    for i, a in enumerate(ax[:n]):
+        a.imshow(masks[i], cmap="gray", aspect="auto")
+        a.set_title(f"Omega #{i + 1}  ({masks[i].mean():.2f})", fontsize=9)
+        a.axis("off")
+    ax[n].plot(np.mean([m[0] for m in masks], axis=0))
+    ax[n].set_title("mean col prob"); ax[n].set_xlabel("PE column"); ax[n].grid(alpha=0.3)
+    extra = f" vds_power={cfg.vds_power}" if cfg.mask_type == "vds" else ""
+    fig.suptitle(f"train masks — acc={cfg.acc_rate} acs={cfg.acs_lines} "
+                 f"{cfg.mask_type}{extra}", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(os.path.join(rdir, fname), dpi=110)
+    plt.close(fig)
+
+
 def save_json(obj, path: str):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:

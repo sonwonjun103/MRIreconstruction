@@ -22,8 +22,8 @@ from ..models import build_unrolled
 from ..losses import MixL1L2Loss
 from ..metrics import all_metrics
 from ..data.masks import undersampling_mask
-from .common import (save_curves, set_seed, get_device, acc_dir, save_checkpoint, save_json,
-                     center_crop)
+from .common import (save_curves, save_mask_preview, set_seed, get_device, acc_dir,
+                     save_checkpoint, save_json, center_crop)
 from .inference import recon_unrolled
 
 
@@ -56,7 +56,7 @@ class SSDUTrainer:
         cfg = self.cfg
         mets = {"ssim": [], "psnr": [], "nmse": [], "nmae": []}
         for i, fpath in enumerate(self.val_files):
-            kspace, sens, _ = read_slice(fpath)
+            kspace, sens, _ = read_slice(fpath, crop_size=cfg.crop_size)
             H, W = kspace.shape[1:]
             rng = np.random.default_rng(i + 1)
             omega = undersampling_mask((H, W), cfg.acc_rate, cfg.acs_lines,
@@ -83,6 +83,8 @@ class SSDUTrainer:
         self._build()
         rdir = acc_dir(self.cfg)
         save_json(self.cfg.to_dict(), os.path.join(rdir, "config.json"))
+        k0, _, _ = read_slice(self.train_ds.files[0], crop_size=self.cfg.crop_size)
+        save_mask_preview(rdir, self.cfg, k0.shape[1:])
 
         history, best = [], -1.0
         n = len(self.train_dl)

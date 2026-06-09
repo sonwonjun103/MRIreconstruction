@@ -3,12 +3,12 @@
 from .unet import UNet
 from .resnet import ResNetDenoiser
 from .unrolled import UnrolledSSDU
-from .mymodel import UnrolledUNet
+from .mymodel import ZSMambaNet, UnrolledUNet
 from .mamba import UnrolledMamba
 from .swin import SwinIR
 from .sense import cg_sense_recon
 
-__all__ = ["UNet", "ResNetDenoiser", "UnrolledSSDU", "UnrolledUNet",
+__all__ = ["UNet", "ResNetDenoiser", "UnrolledSSDU", "ZSMambaNet", "UnrolledUNet",
            "UnrolledMamba", "SwinIR", "cg_sense_recon",
            "build_unrolled", "build_supervised"]
 
@@ -37,7 +37,9 @@ def build_unrolled(cfg):
     if name == "ssdu":
         return UnrolledSSDU(cfg)
     if name == "mymodel":
-        return UnrolledUNet(cfg)
+        return ZSMambaNet(cfg)            # proposed: hierarchical Mamba regulariser
+    if name == "unetunroll":
+        return UnrolledUNet(cfg)          # legacy U-Net-regularised unrolled net
     if name == "mamba":
         return UnrolledMamba(cfg)
     raise ValueError(f"unknown unrolled model: {name}")
