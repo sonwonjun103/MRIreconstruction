@@ -48,6 +48,9 @@ import h5py as h5
 import numpy as np
 import tqdm
 
+# same centered-orthonormal FFT convention as the rest of the toolkit
+from mrrecon.data.transforms import ifft2c_np, fft2c_np, center_crop_2d, rss_np
+
 # --------------------------------------------------------------------------- #
 # config / paths
 # --------------------------------------------------------------------------- #
@@ -134,6 +137,14 @@ def shape_matches(want, shape):
     return all(w is None or w == s for w, s in zip(want, shape))
 
 
+def crop_kspace_slice(kspace_slice, n):
+    """Image-domain center-crop a (C,H,W) k-space slice to (C,n,n):
+    IFFT -> crop coil images -> FFT. Removes readout oversampling and trims the
+    phase FOV, matching the fastMRI 320x320 ground truth (RSS-preserving)."""
+    coil = center_crop_2d(ifft2c_np(kspace_slice), n)      # (C,n,n) complex image
+    return fft2c_np(coil).astype(np.complex64)             # (C,n,n) k-space
+
+
 def save_preview_png(path, rss_slice):
     try:
         import matplotlib
@@ -145,7 +156,13 @@ def save_preview_png(path, rss_slice):
         print(f"  (png preview skipped: {e})")
 
 
-def save_slice(out_dir, volume, sidx, kspace_slice, rss_slice, save_png):
+def save_slice(out_dir, volume, sidx, kspace_slice, rss_slice, save_png, crop=0):
+    if crop > 0:
+        kspace_slice = crop_kspace_slice(kspace_slice, crop)      # (C,crop,crop)
+        # official rss is 320x320; reuse it when it matches, else derive from the
+        # cropped k-space (RSS is pixelwise so this equals the cropped official GT)
+        if rss_slice is None or tuple(rss_slice.shape) != (crop, crop):
+            rss_slice = rss_np(kspace_slice).astype(np.float32)
     sens = espirit_sens_maps(kspace_slice).astype(np.complex64)
     with h5.File(os.path.join(out_dir, f"{volume}_{sidx:03d}.h5"), "w") as f:
         f.create_dataset("kspace", data=kspace_slice.astype(np.complex64))
@@ -161,20 +178,30 @@ def save_slice(out_dir, volume, sidx, kspace_slice, rss_slice, save_png):
 # --------------------------------------------------------------------------- #
 # build a given list of volumes into our {tissue}/{out_split}
 # --------------------------------------------------------------------------- #
-def filter_shape(files, tissue):
+def filter_shape(files, tissue, crop=0):
+    """Volumes usable for this tissue. Without crop: exact KEEP_SHAPE. With crop:
+    any volume large enough to center-crop to (crop,crop) (knee keeps 15 coils),
+    so differing phase-FOV widths are all included."""
     want = KEEP_SHAPE[tissue]
     vols = []
     for fp in files:
         try:
             with h5.File(fp, "r") as f:
-                if "kspace" in f and shape_matches(want, tuple(f["kspace"].shape[1:])):
-                    vols.append(fp)
+                if "kspace" not in f:
+                    continue
+                C, H, W = f["kspace"].shape[1:]            # per-volume (S,C,H,W)
         except Exception:
             continue
+        if crop > 0:
+            ok = (H >= crop and W >= crop) and (want[0] is None or C == want[0])
+        else:
+            ok = shape_matches(want, (C, H, W))
+        if ok:
+            vols.append(fp)
     return vols
 
 
-def build_volumes(tissue, out_split, vols, slices_per_vol, save_png):
+def build_volumes(tissue, out_split, vols, slices_per_vol, save_png, crop=0):
     out_dir = os.path.join(SAVE_ROOT, tissue, out_split)
     if os.path.isdir(out_dir):
         shutil.rmtree(out_dir)
@@ -190,7 +217,7 @@ def build_volumes(tissue, out_split, vols, slices_per_vol, save_png):
             with_gt += 1
         for s in central_indices(kspace.shape[0], slices_per_vol):
             save_slice(out_dir, volume, s, kspace[s],
-                       rss[s] if rss is not None else None, save_png)
+                       rss[s] if rss is not None else None, save_png, crop=crop)
             count += 1
         used.append(volume)
 
@@ -206,6 +233,10 @@ def main():
     ap.add_argument("--tissue", default="both", choices=["knee", "brain", "both"])
     ap.add_argument("--slices_per_vol", type=int, default=0,
                     help="0 = ALL slices per volume (default); N>0 = central N slices")
+    ap.add_argument("--crop", type=int, default=0,
+                    help="image-domain center-crop each slice to NxN at build time "
+                         "(e.g. 320). Makes all volumes the same size so differing "
+                         "phase-FOV widths are ALL usable; train with crop_size 0 after.")
     ap.add_argument("--val_holdout", type=float, default=0.1,
                     help="fraction of the fastMRI VAL set held out (volume-disjoint) as "
                          "our validation set; the rest becomes our test set")
@@ -221,8 +252,8 @@ def main():
         print(f"\n=== {tissue} -> {os.path.join(SAVE_ROOT, tissue)}/ "
               f"(slices_per_vol={args.slices_per_vol or 'ALL'}, val_holdout={args.val_holdout}) ===")
         manifest = {"tissue": tissue, "slices_per_vol": args.slices_per_vol,
-                    "val_holdout": args.val_holdout, "seed": args.seed,
-                    "shape": list(KEEP_SHAPE[tissue]),
+                    "crop": args.crop, "val_holdout": args.val_holdout, "seed": args.seed,
+                    "shape": ([args.crop, args.crop] if args.crop else list(KEEP_SHAPE[tissue])),
                     "mapping": "train <- ALL fastMRI train; val/test <- fastMRI val "
                                "(val_holdout split, both GT)",
                     "splits": {}}
@@ -230,19 +261,19 @@ def main():
         # our train  <-  ALL of fastMRI train
         train_files, src = resolve_source(tissue, "train")
         if train_files:
-            train_vols = filter_shape(train_files, tissue)
+            train_vols = filter_shape(train_files, tissue, args.crop)
             if args.limit:
                 train_vols = train_vols[:args.limit]
             print(f"  [train src '{src}'] {len(train_vols)} volumes (all -> train)")
             manifest["splits"]["train"] = build_volumes(tissue, "train", train_vols,
-                                                        args.slices_per_vol, args.save_png)
+                                                        args.slices_per_vol, args.save_png, args.crop)
         else:
             print(f"  [train] fastMRI train source not found for {tissue} -- skipped")
 
         # our val + test  <-  fastMRI val, volume-disjoint holdout (both have GT)
         val_files, src = resolve_source(tissue, "val")
         if val_files:
-            vols = filter_shape(val_files, tissue)
+            vols = filter_shape(val_files, tissue, args.crop)
             np.random.default_rng(args.seed).shuffle(vols)
             n_val = max(1, int(round(len(vols) * args.val_holdout))) if len(vols) > 1 else 0
             our_val, our_test = vols[:n_val], vols[n_val:]
@@ -251,9 +282,9 @@ def main():
             print(f"  [val src '{src}' = fastMRI val] {len(vols)} vols -> "
                   f"val {len(our_val)} / test {len(our_test)}")
             manifest["splits"]["val"] = build_volumes(tissue, "val", our_val,
-                                                     args.slices_per_vol, args.save_png)
+                                                     args.slices_per_vol, args.save_png, args.crop)
             manifest["splits"]["test"] = build_volumes(tissue, "test", our_test,
-                                                      args.slices_per_vol, args.save_png)
+                                                      args.slices_per_vol, args.save_png, args.crop)
         else:
             print(f"  [val/test] fastMRI val source not available yet for {tissue} "
                   f"(still downloading?) -- skipped; re-run after download")
