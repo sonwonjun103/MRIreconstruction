@@ -22,10 +22,12 @@ import numpy as np
 
 
 def split_dir(data_root: str, tissue: str, split: str, full: bool = False) -> str:
-    """Directory for a split. ``full=True`` selects the full-subject dataset
-    ({tissue}_full); otherwise the central-slice dataset ({tissue})."""
-    sub = f"{tissue}_full" if full else tissue
-    return os.path.join(data_root, sub, split)
+    """Directory for a split: ``{data_root}/{tissue}/{split}``.
+
+    Each split is now built from its own fastMRI source (train/val/test) by
+    MakeDataset.py, so there is a single dataset per tissue. ``full`` is kept for
+    backward-compatible call sites but is ignored (no separate {tissue}_full)."""
+    return os.path.join(data_root, tissue, split)
 
 
 def list_slice_files(data_root: str, tissue: str, split: str = "train",
@@ -40,10 +42,9 @@ def list_slice_files(data_root: str, tissue: str, split: str = "train",
     d = split_dir(data_root, tissue, split, full)
     files = sorted(glob.glob(os.path.join(d, "*.h5")))
     if not files:
-        mode = "--full_subject" if full else ""
         raise FileNotFoundError(
             f"no slice files in {d}\n"
-            f"Build the dataset first:  python MakeDataset.py --tissue {tissue} {mode}".strip())
+            f"Build the dataset first:  python MakeDataset.py --tissue {tissue}")
     if modality:
         files = [f for f in files if f"_{modality}_" in os.path.basename(f)]
         if not files:

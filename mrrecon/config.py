@@ -12,8 +12,8 @@ from typing import Optional
 
 
 # Root that holds the per-slice datasets produced by MakeDataset.py:
-#   {data_root}/{tissue}/{train,val,test}/{subject}_{slice}.h5
-DEFAULT_DATA_ROOT = "/mnt/d/research/MRRecon/data"
+#   {data_root}/{tissue}/{train,val,test}/{volume}_{slice}.h5
+DEFAULT_DATA_ROOT = "/mnt/d/research/MRRecon"
 
 
 @dataclass
