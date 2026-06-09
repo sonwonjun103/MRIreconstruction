@@ -250,7 +250,8 @@ def _add_zeroshot(parser: argparse.ArgumentParser) -> None:
     g.add_argument("--zs_subject", default="",
                    help="h5 stem to fit (in {tissue}_multicoil_train/). Empty -> first test slice.")
     g.add_argument("--zs_slice", type=int, default=-1)
-    g.add_argument("--zs_num_splits", type=int, default=1)
+    g.add_argument("--zs_num_splits", type=int, default=25,
+                   help="(Theta,Lambda) realisations per epoch = official ZS-SSL num_reps (25)")
     g.add_argument("--zs_val_rho", type=float, default=0.2)
     g.add_argument("--zs_patience", type=int, default=25)
 
