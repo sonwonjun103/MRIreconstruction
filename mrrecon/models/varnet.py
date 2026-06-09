@@ -67,6 +67,13 @@ def _build_cnn(cfg):
     if kind == "unet":
         return UNet(in_ch=2, out_ch=2, chans=cfg.unet_chans,
                     num_pools=cfg.unet_pools, residual=False)
+    if kind == "swin":
+        from .monai_nets import MonaiSupervised
+        from monai.networks.nets import SwinUNETR
+        feat = cfg.swin_dim if cfg.swin_dim % 12 == 0 else 48
+        net = SwinUNETR(in_channels=2, out_channels=2, spatial_dims=2,
+                        feature_size=feat, drop_rate=cfg.unet_drop)
+        return MonaiSupervised(net, divisor=32, residual=False)
     if kind == "mamba":
         from .mymodel import MambaUNetDenoiser
         return MambaUNetDenoiser(

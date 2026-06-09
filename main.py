@@ -41,8 +41,13 @@ def _run_sense(cfg, args):
 
 
 def _run_supervised(cfg, args):
-    from mrrecon.engine.supervised import SupervisedTrainer
-    SupervisedTrainer(cfg).train()
+    if getattr(cfg, "use_dc", False):       # wrap --arch in a VarNet (data consistency)
+        cfg.varnet_cnn = cfg.arch
+        from mrrecon.engine.varnet import VarNetTrainer
+        VarNetTrainer(cfg).train()
+    else:
+        from mrrecon.engine.supervised import SupervisedTrainer
+        SupervisedTrainer(cfg).train()
 
 
 def _run_varnet(cfg, args):

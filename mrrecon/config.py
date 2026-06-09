@@ -61,8 +61,9 @@ class Config:
     mymodel_expand: int = 1               # SS2D inner expansion (1 = lean, zero-shot friendly)
 
     # ---- VarNet: multi-coil k-space cascades with RSS output ----
+    use_dc: bool = False                  # supervised: wrap --arch in VarNet (data consistency)
     varnet_cascades: int = 8              # number of unrolled cascades
-    varnet_cnn: str = "unet"              # refinement CNN: "unet" | "mamba"
+    varnet_cnn: str = "unet"              # refinement CNN: "unet" | "swin" | "mamba"
 
     # ---- mamba: Mamba-ViT-regularised unrolled net ----
     mamba_dim: int = 128                  # token embedding dim
@@ -183,8 +184,8 @@ def _add_unrolled(parser: argparse.ArgumentParser) -> None:
     g.add_argument("--mymodel_expand", type=int, default=1, help="SS2D inner expansion")
     g.add_argument("--varnet_cascades", type=int, default=8,
                    help="number of VarNet cascades (--model varnet)")
-    g.add_argument("--varnet_cnn", default="unet", choices=["unet", "mamba"],
-                   help="VarNet refinement CNN: 'unet' or 'mamba'")
+    g.add_argument("--varnet_cnn", default="unet", choices=["unet", "swin", "mamba"],
+                   help="VarNet refinement CNN: 'unet', 'swin', or 'mamba'")
     g.add_argument("--mamba_dim", type=int, default=128)
     g.add_argument("--mamba_depth", type=int, default=4)
     g.add_argument("--mamba_patch", type=int, default=16)
@@ -202,6 +203,10 @@ def _add_unet(parser: argparse.ArgumentParser) -> None:
     g.add_argument("--sup_target", default="rss", choices=["rss", "sense"],
                    help="supervised target: 'rss' (1-ch magnitude, fastMRI-standard) "
                         "or 'sense' (2-ch complex SENSE image)")
+    g.add_argument("--use_dc", action="store_true",
+                   help="wrap --arch (unet/swin) in a VarNet so it gets multi-coil "
+                        "data consistency (DC). Off = plain image-to-image (no DC). "
+                        "With --use_dc the output is always RSS.")
     g.add_argument("--loss", default="l1", choices=["l1", "l2", "ssim", "l1ssim"],
                    help="supervised loss (ssim/l1ssim use 1-SSIM on magnitude)")
     g.add_argument("--ssim_weight", type=float, default=1.0,
@@ -275,6 +280,8 @@ def configure_parser(parser: argparse.ArgumentParser, method: str) -> argparse.A
         parser.add_argument("--save_figs", action="store_true")
     elif method == "supervised":
         _add_unet(parser)
+        parser.add_argument("--varnet_cascades", type=int, default=8,
+                            help="cascades when --use_dc (wraps --arch in a VarNet)")
     elif method == "varnet":
         _add_unet(parser)                # unet_chans/pools + loss/ssim_weight
         _add_unrolled(parser)            # varnet_cascades/varnet_cnn + mymodel_* (mamba CNN)

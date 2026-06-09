@@ -42,8 +42,11 @@ class Evaluator:
                              recon_sense(k, s, o, d, cfg.sense_lam, cfg.sense_cg_iter))
             return None
 
-        if self.method == "varnet":
+        if self.method == "varnet" or (self.method == "supervised"
+                                       and getattr(self.cfg, "use_dc", False)):
             from ..models.varnet import VarNet
+            if self.method == "supervised":
+                self.cfg.varnet_cnn = self.cfg.arch     # --arch is the VarNet CNN
             model = VarNet(self.cfg)
             self.recon_fn = recon_varnet
         elif self.method == "supervised":
