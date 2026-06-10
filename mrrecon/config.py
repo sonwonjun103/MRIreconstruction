@@ -145,14 +145,14 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     g.add_argument("--max_slices", type=int, default=-1,
                    help="-1 uses all slices; a positive value subsets for speed")
     g.add_argument("--full_subject", action="store_true",
-                   help="use the full-subject dataset ({tissue}_full, all slices) "
-                        "instead of the central-slice one ({tissue})")
+                   help="(deprecated, ignored) there is now a single dataset per "
+                        "tissue at {data_root}/{tissue}/{split}")
     g.add_argument("--crop_size", type=int, default=0,
                    help="crop k-space+sens to NxN in image domain before the model "
-                        "(removes readout oversampling, matches 320x320 GT). e.g. 320; 0=off")
+                        "(removes readout oversampling). Use 0 if the dataset was "
+                        "already built with MakeDataset --crop (data is pre-cropped).")
     g.add_argument("--mode", default="central", choices=["central", "full"],
-                   help="dataset variant: 'central' ({tissue}) or 'full' "
-                        "({tissue}_full). Same meaning as --full_subject.")
+                   help="(deprecated, ignored) single dataset per tissue now")
 
     g = parser.add_argument_group("undersampling")
     g.add_argument("--acc_rate", type=int, default=4)
