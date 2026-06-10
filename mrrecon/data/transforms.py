@@ -67,6 +67,11 @@ def remove_oversampling(kspace: np.ndarray, sens: np.ndarray, size=320):
 
     kspace (C,H,W) complex, sens (C,H,W) complex -> both (C,size,size).
     """
+    # already at the target size (e.g. dataset built with MakeDataset --crop) ->
+    # no-op, skip the redundant IFFT/FFT round-trip
+    if kspace.shape[-2] == size and kspace.shape[-1] == size \
+            and sens.shape[-2] == size and sens.shape[-1] == size:
+        return (np.ascontiguousarray(kspace), np.ascontiguousarray(sens))
     coil = center_crop_2d(ifft2c_np(kspace), size)        # (C,size,size) complex image
     kspace_c = fft2c_np(coil)                             # (C,size,size) k-space
     sens_c = center_crop_2d(sens, size)

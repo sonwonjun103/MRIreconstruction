@@ -32,8 +32,8 @@ class Config:
     max_slices: int = -1                  # -1 = use all; >0 = subset (debug/speed)
     full_subject: bool = False            # True -> use {tissue}_full (all slices/subject);
                                           # False -> {tissue} (central slices only)
-    crop_size: int = 0                    # >0: crop kspace+sens to NxN in image domain
-                                          # (removes readout oversampling, matches GT). 0=off
+    crop_size: int = 320                  # crop kspace+sens to NxN in image domain to match
+                                          # the RSS GT (no-op if data already that size). 0=off
 
     # ---- undersampling (the *acquisition* mask Omega) ----
     acc_rate: int = 4
@@ -147,10 +147,10 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     g.add_argument("--full_subject", action="store_true",
                    help="(deprecated, ignored) there is now a single dataset per "
                         "tissue at {data_root}/{tissue}/{split}")
-    g.add_argument("--crop_size", type=int, default=0,
-                   help="crop k-space+sens to NxN in image domain before the model "
-                        "(removes readout oversampling). Use 0 if the dataset was "
-                        "already built with MakeDataset --crop (data is pre-cropped).")
+    g.add_argument("--crop_size", type=int, default=320,
+                   help="crop k-space+sens to NxN in image domain to match the RSS GT "
+                        "(default 320). No-op if the data is already NxN (e.g. built "
+                        "with MakeDataset --crop). Use 0 to disable entirely.")
     g.add_argument("--mode", default="central", choices=["central", "full"],
                    help="(deprecated, ignored) single dataset per tissue now")
 
