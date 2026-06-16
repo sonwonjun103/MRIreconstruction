@@ -234,7 +234,7 @@ def main():
     ap.add_argument("--slices_per_vol", type=int, default=0,
                     help="0 = ALL slices per volume (default); N>0 = central N slices")
     ap.add_argument("--crop", type=int, default=0,
-                    help="image-domain center-crop each slice to NxN at build time "
+                    help="image-domain center-crop each slice to NxN at build time " 
                          "(e.g. 320). Makes all volumes the same size so differing "
                          "phase-FOV widths are ALL usable; train with crop_size 0 after.")
     ap.add_argument("--val_holdout", type=float, default=0.1,
