@@ -137,12 +137,23 @@ def shape_matches(want, shape):
     return all(w is None or w == s for w, s in zip(want, shape))
 
 
-def crop_kspace_slice(kspace_slice, n):
-    """Image-domain center-crop a (C,H,W) k-space slice to (C,n,n):
-    IFFT -> crop coil images -> FFT. Removes readout oversampling and trims the
-    phase FOV, matching the fastMRI 320x320 ground truth (RSS-preserving)."""
-    coil = center_crop_2d(ifft2c_np(kspace_slice), n)      # (C,n,n) complex image
-    return fft2c_np(coil).astype(np.complex64)             # (C,n,n) k-space
+def crop_kspace_slice(kspace_slice, n, readout_mode="crop"):
+    """Crop a (C,H,W) k-space slice to (C,n,n).
+
+    readout_mode:
+      'crop'    : image-domain center-crop both axes (IFFT -> crop -> FFT).
+                  Matches the fastMRI 320x320 GT exactly (RSS SSIM 1.0). [default]
+      'evenodd' : remove readout (axis -2) oversampling by keeping every other
+                  k-space line (640 -> 320), then image-crop the phase axis to n.
+                  NOTE: introduces a readout half-pixel shift + residual aliasing,
+                  so it does NOT match the official reconstruction_rss (SSIM ~0.85);
+                  the stored GT is therefore derived from this processed k-space."""
+    if readout_mode == "evenodd":
+        k = kspace_slice[:, 0::2, :]                       # readout 640 -> 320 (even lines)
+        coil = center_crop_2d(ifft2c_np(k), n)             # phase axis -> n (image-domain)
+        return fft2c_np(coil).astype(np.complex64)
+    coil = center_crop_2d(ifft2c_np(kspace_slice), n)      # 'crop': image-domain both axes
+    return fft2c_np(coil).astype(np.complex64)
 
 
 def save_preview_png(path, rss_slice):
@@ -156,12 +167,14 @@ def save_preview_png(path, rss_slice):
         print(f"  (png preview skipped: {e})")
 
 
-def save_slice(out_dir, volume, sidx, kspace_slice, rss_slice, save_png, crop=0):
+def save_slice(out_dir, volume, sidx, kspace_slice, rss_slice, save_png, crop=0,
+               readout_mode="crop"):
     if crop > 0:
-        kspace_slice = crop_kspace_slice(kspace_slice, crop)      # (C,crop,crop)
-        # official rss is 320x320; reuse it when it matches, else derive from the
-        # cropped k-space (RSS is pixelwise so this equals the cropped official GT)
-        if rss_slice is None or tuple(rss_slice.shape) != (crop, crop):
+        kspace_slice = crop_kspace_slice(kspace_slice, crop, readout_mode)   # (C,crop,crop)
+        # 'crop' matches the official 320 rss (reuse it). 'evenodd' is shifted, so
+        # always derive a self-consistent GT from the processed k-space.
+        if (readout_mode == "evenodd" or rss_slice is None
+                or tuple(rss_slice.shape) != (crop, crop)):
             rss_slice = rss_np(kspace_slice).astype(np.float32)
     sens = espirit_sens_maps(kspace_slice).astype(np.complex64)
     with h5.File(os.path.join(out_dir, f"{volume}_{sidx:03d}.h5"), "w") as f:
@@ -201,7 +214,8 @@ def filter_shape(files, tissue, crop=0):
     return vols
 
 
-def build_volumes(tissue, out_split, vols, slices_per_vol, save_png, crop=0):
+def build_volumes(tissue, out_split, vols, slices_per_vol, save_png, crop=0,
+                  readout_mode="crop"):
     out_dir = os.path.join(SAVE_ROOT, tissue, out_split)
     if os.path.isdir(out_dir):
         shutil.rmtree(out_dir)
@@ -217,7 +231,8 @@ def build_volumes(tissue, out_split, vols, slices_per_vol, save_png, crop=0):
             with_gt += 1
         for s in central_indices(kspace.shape[0], slices_per_vol):
             save_slice(out_dir, volume, s, kspace[s],
-                       rss[s] if rss is not None else None, save_png, crop=crop)
+                       rss[s] if rss is not None else None, save_png, crop=crop,
+                       readout_mode=readout_mode)
             count += 1
         used.append(volume)
 
@@ -234,9 +249,13 @@ def main():
     ap.add_argument("--slices_per_vol", type=int, default=0,
                     help="0 = ALL slices per volume (default); N>0 = central N slices")
     ap.add_argument("--crop", type=int, default=0,
-                    help="image-domain center-crop each slice to NxN at build time " 
+                    help="image-domain center-crop each slice to NxN at build time "
                          "(e.g. 320). Makes all volumes the same size so differing "
                          "phase-FOV widths are ALL usable; train with crop_size 0 after.")
+    ap.add_argument("--readout_mode", default="crop", choices=["crop", "evenodd"],
+                    help="how --crop removes readout oversampling: 'crop' (image-domain, "
+                         "matches official GT, SSIM 1.0) [default] or 'evenodd' (keep every "
+                         "other readout k-space line; GT then derived from it, SSIM ~0.85)")
     ap.add_argument("--val_holdout", type=float, default=0.1,
                     help="fraction of the fastMRI VAL set held out (volume-disjoint) as "
                          "our validation set; the rest becomes our test set")
@@ -252,7 +271,8 @@ def main():
         print(f"\n=== {tissue} -> {os.path.join(SAVE_ROOT, tissue)}/ "
               f"(slices_per_vol={args.slices_per_vol or 'ALL'}, val_holdout={args.val_holdout}) ===")
         manifest = {"tissue": tissue, "slices_per_vol": args.slices_per_vol,
-                    "crop": args.crop, "val_holdout": args.val_holdout, "seed": args.seed,
+                    "crop": args.crop, "readout_mode": args.readout_mode,
+                    "val_holdout": args.val_holdout, "seed": args.seed,
                     "shape": ([args.crop, args.crop] if args.crop else list(KEEP_SHAPE[tissue])),
                     "mapping": "train <- ALL fastMRI train; val/test <- fastMRI val "
                                "(val_holdout split, both GT)",
@@ -266,7 +286,8 @@ def main():
                 train_vols = train_vols[:args.limit]
             print(f"  [train src '{src}'] {len(train_vols)} volumes (all -> train)")
             manifest["splits"]["train"] = build_volumes(tissue, "train", train_vols,
-                                                        args.slices_per_vol, args.save_png, args.crop)
+                                                        args.slices_per_vol, args.save_png,
+                                                        args.crop, args.readout_mode)
         else:
             print(f"  [train] fastMRI train source not found for {tissue} -- skipped")
 
@@ -282,9 +303,11 @@ def main():
             print(f"  [val src '{src}' = fastMRI val] {len(vols)} vols -> "
                   f"val {len(our_val)} / test {len(our_test)}")
             manifest["splits"]["val"] = build_volumes(tissue, "val", our_val,
-                                                     args.slices_per_vol, args.save_png, args.crop)
+                                                     args.slices_per_vol, args.save_png,
+                                                     args.crop, args.readout_mode)
             manifest["splits"]["test"] = build_volumes(tissue, "test", our_test,
-                                                      args.slices_per_vol, args.save_png, args.crop)
+                                                      args.slices_per_vol, args.save_png,
+                                                      args.crop, args.readout_mode)
         else:
             print(f"  [val/test] fastMRI val source not available yet for {tissue} "
                   f"(still downloading?) -- skipped; re-run after download")
