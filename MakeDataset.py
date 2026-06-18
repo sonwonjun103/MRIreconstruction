@@ -73,6 +73,15 @@ SOURCES = {
     },
 }
 
+# The official fastMRI *test* (challenge) set: prospectively undersampled k-space +
+# its real sampling mask, NO reconstruction_rss. Built into a separate
+# ``test_challenge`` split for qualitative/inference only (no GT metrics). The .h5
+# usually live one level down (e.g. knee_multicoil_test/multicoil_test/).
+CHALLENGE_SOURCES = {
+    "knee":  ["knee_multicoil_test/multicoil_test", "knee_multicoil_test", "multicoil_test"],
+    "brain": ["brain_multicoil_test/multicoil_test", "brain_multicoil_test", "multicoil_test"],
+}
+
 # keep a consistent (C, H, W) per tissue; None matches any value on that axis.
 KEEP_SHAPE = {"knee": (15, 640, 368), "brain": (None, 640, 320)}
 
@@ -86,11 +95,55 @@ assert shutil.which("bart"), f"bart not found; check BART_PATH={BART_PATH}"
 from bart import bart  # noqa: E402
 
 
-def espirit_sens_maps(kspace_slice):
-    """ESPIRiT sensitivity maps for one slice. (C,H,W) complex -> (C,H,W) complex."""
+def espirit_sens_maps(kspace_slice, calib=24):
+    """ESPIRiT sensitivity maps for one slice. (C,H,W) complex -> (C,H,W) complex.
+
+    ``calib`` is the BART ecalib calibration-region size (-r). For prospectively
+    undersampled data it must not exceed the fully-sampled ACS width, else the
+    calibration region would include aliased (undersampled) lines."""
     ks = kspace_slice.transpose(1, 2, 0)[None, ...]        # (1, H, W, C)
-    smap = bart(1, "ecalib -d0 -m1 -r24", ks)              # (1, H, W, C, 1)
+    smap = bart(1, f"ecalib -d0 -m1 -r{calib}", ks)        # (1, H, W, C, 1)
     return smap.transpose(3, 1, 2, 0).squeeze(-1)          # (C, H, W)
+
+
+def _ifft1c(x, axis):
+    return np.fft.fftshift(np.fft.ifft(np.fft.ifftshift(x, axes=axis),
+                                       axis=axis, norm="ortho"), axes=axis)
+
+
+def _fft1c(x, axis):
+    return np.fft.fftshift(np.fft.fft(np.fft.ifftshift(x, axes=axis),
+                                      axis=axis, norm="ortho"), axes=axis)
+
+
+def crop_readout_slice(kspace_slice, n):
+    """Remove readout (axis -2) oversampling ONLY: 1-D IFFT along readout,
+    center-crop to n, 1-D FFT back. (C,H,W) -> (C,n,W).
+
+    The readout axis is fully sampled even for the prospectively undersampled test
+    set, so this is alias-free; the phase axis (the undersampled axis) is left
+    completely untouched, so its 1-D sampling mask stays exactly valid."""
+    img = _ifft1c(kspace_slice, axis=-2)                   # (C,H,W) readout image
+    h = img.shape[-2]
+    top = max(0, (h - n) // 2)
+    img = img[..., top:top + n, :]
+    return _fft1c(img, axis=-2).astype(np.complex64)       # (C,n,W)
+
+
+def acs_calib_width(mask, lo=6, hi=24):
+    """Width (clamped to [lo,hi]) of the central fully-sampled ACS block of a 1-D
+    phase mask -- a safe BART ecalib -r for prospectively undersampled data."""
+    if mask is None:
+        return hi
+    m = np.asarray(mask).astype(bool).ravel()
+    c = len(m) // 2
+    l = c
+    while l > 0 and m[l - 1]:
+        l -= 1
+    r = c
+    while r < len(m) - 1 and m[r + 1]:
+        r += 1
+    return int(max(lo, min(hi, r - l + 1)))
 
 
 # --------------------------------------------------------------------------- #
@@ -243,6 +296,57 @@ def build_volumes(tissue, out_split, vols, slices_per_vol, save_png, crop=0,
     return {"slices": count, "volumes": len(used), "volumes_with_gt": with_gt}
 
 
+def resolve_challenge_source(tissue):
+    """First CHALLENGE_SOURCES candidate (possibly nested) that holds .h5 files."""
+    for name in CHALLENGE_SOURCES[tissue]:
+        files = _h5_in(os.path.join(RAW_ROOT, name))
+        if files:
+            return files, name
+    return [], None
+
+
+def build_challenge_volumes(tissue, vols, slices_per_vol, save_png, readout=320):
+    """Build the prospectively-undersampled official test set into
+    {tissue}/test_challenge. Stores kspace (readout-cropped, phase native) + ESPIRiT
+    sens + the real 1-D sampling mask; NO rss (the challenge set has no GT)."""
+    out_dir = os.path.join(SAVE_ROOT, tissue, "test_challenge")
+    if os.path.isdir(out_dir):
+        shutil.rmtree(out_dir)
+    os.makedirs(out_dir, exist_ok=True)
+
+    count, used, accels = 0, [], []
+    for fp in tqdm.tqdm(vols, desc=f"{tissue}/test_challenge"):
+        volume = os.path.splitext(os.path.basename(fp))[0]
+        with h5.File(fp, "r") as f:
+            kspace = f["kspace"][:]                          # (S,C,640,W) undersampled
+            mask = f["mask"][:] if "mask" in f else None
+        calib = acs_calib_width(mask)
+        if mask is not None:
+            accels.append(len(mask) / max(1, int(np.asarray(mask).sum())))
+        for s in central_indices(kspace.shape[0], slices_per_vol):
+            k = crop_readout_slice(kspace[s], readout)       # (C,readout,W)
+            sens = espirit_sens_maps(k, calib).astype(np.complex64)
+            with h5.File(os.path.join(out_dir, f"{volume}_{s:03d}.h5"), "w") as f:
+                f.create_dataset("kspace", data=k)
+                f.create_dataset("sens_map", data=sens)
+                if mask is not None:
+                    f.create_dataset("mask", data=np.asarray(mask).astype(bool))
+            if save_png:
+                png_dir = os.path.join(out_dir, "preview")
+                os.makedirs(png_dir, exist_ok=True)
+                save_preview_png(os.path.join(png_dir, f"{volume}_{s:03d}.png"),
+                                 rss_np(k))                   # zero-filled RSS preview
+            count += 1
+        used.append(volume)
+
+    acc = f", mean accel {np.mean(accels):.1f}x" if accels else ""
+    print(f"  -> {out_dir}: {count} slices from {len(used)} volumes; "
+          f"0/{len(vols)} with GT (prospectively undersampled{acc})")
+    return {"slices": count, "volumes": len(used), "volumes_with_gt": 0,
+            "prospectively_undersampled": True,
+            "mean_accel": round(float(np.mean(accels)), 2) if accels else None}
+
+
 def main():
     ap = argparse.ArgumentParser(description="Build fastMRI train/val/test datasets")
     ap.add_argument("--tissue", default="both", choices=["knee", "brain", "both"])
@@ -260,6 +364,13 @@ def main():
                     help="fraction of the fastMRI VAL set held out (volume-disjoint) as "
                          "our validation set; the rest becomes our test set")
     ap.add_argument("--seed", type=int, default=1234, help="val/test holdout shuffle seed")
+    ap.add_argument("--splits", nargs="+",
+                    default=["train", "valtest", "challenge"],
+                    choices=["train", "valtest", "challenge"],
+                    help="which split groups to (re)build: 'train' (our train <- fastMRI "
+                         "train), 'valtest' (our val+test <- fastMRI val holdout, both GT), "
+                         "'challenge' (our test_challenge <- official fastMRI test, no GT). "
+                         "Groups not listed are left untouched on disk.")
     ap.add_argument("--save_png", action="store_true",
                     help="also write a magnitude PNG preview per slice")
     ap.add_argument("--limit", type=int, default=0,
@@ -270,47 +381,75 @@ def main():
     for tissue in tissues:
         print(f"\n=== {tissue} -> {os.path.join(SAVE_ROOT, tissue)}/ "
               f"(slices_per_vol={args.slices_per_vol or 'ALL'}, val_holdout={args.val_holdout}) ===")
+        # preserve manifest entries for split groups we are NOT rebuilding this run
+        man_path = os.path.join(SAVE_ROOT, tissue, "manifest.json")
+        prev_splits = {}
+        if os.path.exists(man_path):
+            try:
+                prev_splits = json.load(open(man_path)).get("splits", {})
+            except Exception:
+                prev_splits = {}
         manifest = {"tissue": tissue, "slices_per_vol": args.slices_per_vol,
                     "crop": args.crop, "readout_mode": args.readout_mode,
                     "val_holdout": args.val_holdout, "seed": args.seed,
                     "shape": ([args.crop, args.crop] if args.crop else list(KEEP_SHAPE[tissue])),
                     "mapping": "train <- ALL fastMRI train; val/test <- fastMRI val "
-                               "(val_holdout split, both GT)",
-                    "splits": {}}
+                               "(val_holdout split, both GT); test_challenge <- official "
+                               "fastMRI test (prospectively undersampled, NO GT)",
+                    "splits": dict(prev_splits)}
 
         # our train  <-  ALL of fastMRI train
-        train_files, src = resolve_source(tissue, "train")
-        if train_files:
-            train_vols = filter_shape(train_files, tissue, args.crop)
-            if args.limit:
-                train_vols = train_vols[:args.limit]
-            print(f"  [train src '{src}'] {len(train_vols)} volumes (all -> train)")
-            manifest["splits"]["train"] = build_volumes(tissue, "train", train_vols,
-                                                        args.slices_per_vol, args.save_png,
-                                                        args.crop, args.readout_mode)
-        else:
-            print(f"  [train] fastMRI train source not found for {tissue} -- skipped")
+        if "train" in args.splits:
+            train_files, src = resolve_source(tissue, "train")
+            if train_files:
+                train_vols = filter_shape(train_files, tissue, args.crop)
+                if args.limit:
+                    train_vols = train_vols[:args.limit]
+                print(f"  [train src '{src}'] {len(train_vols)} volumes (all -> train)")
+                manifest["splits"]["train"] = build_volumes(tissue, "train", train_vols,
+                                                            args.slices_per_vol, args.save_png,
+                                                            args.crop, args.readout_mode)
+            else:
+                print(f"  [train] fastMRI train source not found for {tissue} -- skipped "
+                      f"(existing {tissue}/train left untouched)")
 
         # our val + test  <-  fastMRI val, volume-disjoint holdout (both have GT)
-        val_files, src = resolve_source(tissue, "val")
-        if val_files:
-            vols = filter_shape(val_files, tissue, args.crop)
-            np.random.default_rng(args.seed).shuffle(vols)
-            n_val = max(1, int(round(len(vols) * args.val_holdout))) if len(vols) > 1 else 0
-            our_val, our_test = vols[:n_val], vols[n_val:]
-            if args.limit:
-                our_val, our_test = our_val[:max(1, args.limit // 5)], our_test[:args.limit]
-            print(f"  [val src '{src}' = fastMRI val] {len(vols)} vols -> "
-                  f"val {len(our_val)} / test {len(our_test)}")
-            manifest["splits"]["val"] = build_volumes(tissue, "val", our_val,
-                                                     args.slices_per_vol, args.save_png,
-                                                     args.crop, args.readout_mode)
-            manifest["splits"]["test"] = build_volumes(tissue, "test", our_test,
-                                                      args.slices_per_vol, args.save_png,
-                                                      args.crop, args.readout_mode)
-        else:
-            print(f"  [val/test] fastMRI val source not available yet for {tissue} "
-                  f"(still downloading?) -- skipped; re-run after download")
+        if "valtest" in args.splits:
+            val_files, src = resolve_source(tissue, "val")
+            if val_files:
+                vols = filter_shape(val_files, tissue, args.crop)
+                np.random.default_rng(args.seed).shuffle(vols)
+                n_val = max(1, int(round(len(vols) * args.val_holdout))) if len(vols) > 1 else 0
+                our_val, our_test = vols[:n_val], vols[n_val:]
+                if args.limit:
+                    our_val, our_test = our_val[:max(1, args.limit // 5)], our_test[:args.limit]
+                print(f"  [val src '{src}' = fastMRI val] {len(vols)} vols -> "
+                      f"val {len(our_val)} / test {len(our_test)}")
+                manifest["splits"]["val"] = build_volumes(tissue, "val", our_val,
+                                                         args.slices_per_vol, args.save_png,
+                                                         args.crop, args.readout_mode)
+                manifest["splits"]["test"] = build_volumes(tissue, "test", our_test,
+                                                          args.slices_per_vol, args.save_png,
+                                                          args.crop, args.readout_mode)
+            else:
+                print(f"  [val/test] fastMRI val source not available yet for {tissue} "
+                      f"(still downloading?) -- skipped; re-run after download")
+
+        # our test_challenge  <-  official fastMRI test set (prospectively undersampled, NO GT)
+        if "challenge" in args.splits:
+            ch_files, src = resolve_challenge_source(tissue)
+            if ch_files:
+                ch_vols = filter_shape(ch_files, tissue, args.crop or 320)
+                if args.limit:
+                    ch_vols = ch_vols[:args.limit]
+                print(f"  [test_challenge src '{src}' = official fastMRI test] "
+                      f"{len(ch_vols)} volumes (NO GT)")
+                manifest["splits"]["test_challenge"] = build_challenge_volumes(
+                    tissue, ch_vols, args.slices_per_vol, args.save_png,
+                    readout=(args.crop or 320))
+            else:
+                print(f"  [test_challenge] official fastMRI test source not found for "
+                      f"{tissue} -- skipped")
 
         if manifest["splits"]:
             os.makedirs(os.path.join(SAVE_ROOT, tissue), exist_ok=True)
