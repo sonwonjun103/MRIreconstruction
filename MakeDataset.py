@@ -362,7 +362,11 @@ def main():
                          "other readout k-space line; GT then derived from it, SSIM ~0.85)")
     ap.add_argument("--val_holdout", type=float, default=0.1,
                     help="fraction of the fastMRI VAL set held out (volume-disjoint) as "
-                         "our validation set; the rest becomes our test set")
+                         "our validation set")
+    ap.add_argument("--test_holdout", type=float, default=0.0,
+                    help="fraction of the fastMRI VAL set used as our test set (volume-"
+                         "disjoint from val). 0 (default) = use ALL the remaining volumes "
+                         "after val; e.g. 0.1 = a 10%% test set (the rest is unused).")
     ap.add_argument("--seed", type=int, default=1234, help="val/test holdout shuffle seed")
     ap.add_argument("--splits", nargs="+",
                     default=["train", "valtest", "challenge"],
@@ -391,7 +395,8 @@ def main():
                 prev_splits = {}
         manifest = {"tissue": tissue, "slices_per_vol": args.slices_per_vol,
                     "crop": args.crop, "readout_mode": args.readout_mode,
-                    "val_holdout": args.val_holdout, "seed": args.seed,
+                    "val_holdout": args.val_holdout, "test_holdout": args.test_holdout,
+                    "seed": args.seed,
                     "shape": ([args.crop, args.crop] if args.crop else list(KEEP_SHAPE[tissue])),
                     "mapping": "train <- ALL fastMRI train; val/test <- fastMRI val "
                                "(val_holdout split, both GT); test_challenge <- official "
@@ -420,7 +425,11 @@ def main():
                 vols = filter_shape(val_files, tissue, args.crop)
                 np.random.default_rng(args.seed).shuffle(vols)
                 n_val = max(1, int(round(len(vols) * args.val_holdout))) if len(vols) > 1 else 0
-                our_val, our_test = vols[:n_val], vols[n_val:]
+                if args.test_holdout > 0:
+                    n_test = max(1, int(round(len(vols) * args.test_holdout)))
+                    our_val, our_test = vols[:n_val], vols[n_val:n_val + n_test]
+                else:
+                    our_val, our_test = vols[:n_val], vols[n_val:]
                 if args.limit:
                     our_val, our_test = our_val[:max(1, args.limit // 5)], our_test[:args.limit]
                 print(f"  [val src '{src}' = fastMRI val] {len(vols)} vols -> "
