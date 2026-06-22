@@ -38,8 +38,8 @@ class Config:
     # ---- undersampling (the *acquisition* mask Omega) ----
     acc_rate: int = 4
     acs_lines: int = 24
-    mask_type: str = "random"             # "random" | "gaussian1d" | "vds"
-    vds_power: float = 3.0                # variable-density polynomial power (mask_type=vds)
+    mask_type: str = "vds"             # "random" | "gaussian1d" | "vds"
+    vds_power: float = 2.0                # variable-density polynomial power (mask_type=vds)
 
     # ---- SSDU mask splitting (Omega -> train Theta / loss Lambda) ----
     divide_method: str = "Gaussian_selection"  # or "uniform_selection"
