@@ -18,7 +18,7 @@ from torch.utils.data import DataLoader
 from ..data.loaders import list_slice_files
 from ..data.datasets import DiffusionDataset
 from ..models.diffusion import DiffusionUNet, GaussianDiffusion
-from .common import (set_seed, get_device, acc_dir, save_checkpoint,
+from ..core.common import (set_seed, get_device, acc_dir, save_checkpoint,
                      save_json, save_curves)
 
 

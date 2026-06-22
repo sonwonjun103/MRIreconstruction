@@ -271,7 +271,10 @@ def config_from_args(args: argparse.Namespace) -> Config:
 
 
 def _add_split(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--split", default="test", choices=["train", "val", "test"])
+    parser.add_argument("--split", default="test",
+                        choices=["train", "val", "test", "test_challenge"],
+                        help="dataset split; test_challenge = official fastMRI test "
+                             "(prospectively undersampled, NO GT -> inference/figures only)")
 
 
 def _add_eval(parser: argparse.ArgumentParser) -> None:

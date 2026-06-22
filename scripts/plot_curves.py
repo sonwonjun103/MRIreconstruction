@@ -12,7 +12,7 @@ import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from mrrecon.engine.common import save_curves
+from mrrecon.core.common import save_curves
 
 
 def main():

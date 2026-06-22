@@ -1,22 +1,18 @@
 #!/usr/bin/env python
-"""Unified entry point for the mrrecon toolkit.
+"""Legacy unified entry point for the mrrecon toolkit (kept for back-compat).
 
-One command runs every method via subcommands:
+PREFER the per-method folder entry points -- each shows ONLY its own flags:
 
-    python main.py sense       --tissue knee --split test --run_name sense_knee
-    python main.py supervised  --tissue knee --epochs 50  --run_name unet_knee
-    python main.py ssdu        --tissue knee --epochs 50  --run_name ssdu_knee [--model mymodel]
-    python main.py zeroshot    --tissue knee --split test --model mymodel \
-                               --epochs 300 --zs_patience 25 --lr 5e-4 --run_name zs_knee
-    python main.py diffusion   --tissue knee --epochs 100 --run_name diff_knee   # train prior
-    python main.py eval        --method diffusion --tissue knee --split test \
-                               --ckpt runs/diff_knee/last.pt --run_name diff_eval # zero-shot recon
-    python main.py eval        --method ssdu --tissue knee --split test \
-                               --ckpt runs/ssdu_knee/best.pt --run_name ssdu_eval --save_figs
+    python -m mrrecon.supervised      --net unet   --tissue knee --run_name unet_knee
+    python -m mrrecon.supervised      --net dccnn  --tissue knee --backbone unet
+    python -m mrrecon.supervised      --net varnet --tissue knee
+    python -m mrrecon.self_supervised --algo ssdu  --tissue knee [--model mymodel]
+    python -m mrrecon.zero_shot       --algo zsssl --tissue knee --split test
+    python -m mrrecon.zero_shot       --algo diffusion --tissue knee   # train prior
+    python -m mrrecon.eval --method ssdu --run runs/ssdu_knee --tissue knee --split test
 
-Run ``python main.py <subcommand> -h`` to see the flags for that subcommand, or
-``python main.py -h`` for the list. Every subcommand shares the same flag names
-as the standalone scripts in ``scripts/`` (this just dispatches to them).
+This file still works (same subcommands as before) and dispatches to the same
+trainers, now living under mrrecon/{supervised,self_supervised,zero_shot,eval}/.
 """
 
 from __future__ import annotations
@@ -35,7 +31,7 @@ from mrrecon.config import configure_parser, config_from_args
 # command -> (configure key, runner). Runners import lazily so a single
 # subcommand doesn't pay the import cost of all the others.
 def _run_sense(cfg, args):
-    from mrrecon.engine.evaluator import Evaluator
+    from mrrecon.eval.evaluator import Evaluator
     Evaluator(cfg, method="sense", ckpt=None,
               split=args.split, save_figs=args.save_figs).evaluate()
 
@@ -44,52 +40,52 @@ def _run_supervised(cfg, args):
     if getattr(cfg, "use_dc", False):       # wrap --arch in a DCCNN (data consistency)
         cfg.cnn = cfg.arch
         cfg.varnet_official = False
-        from mrrecon.engine.varnet import VarNetTrainer
+        from mrrecon.supervised.dc import VarNetTrainer
         VarNetTrainer(cfg).train()
     else:
-        from mrrecon.engine.supervised import SupervisedTrainer
+        from mrrecon.supervised.trainer import SupervisedTrainer
         SupervisedTrainer(cfg).train()
 
 
 def _run_dccnn(cfg, args):
     cfg.varnet_official = False             # our Deep Cascade (pluggable backbone)
-    from mrrecon.engine.varnet import VarNetTrainer
+    from mrrecon.supervised.dc import VarNetTrainer
     VarNetTrainer(cfg).train()
 
 
 def _run_varnet(cfg, args):
     cfg.varnet_official = True              # official fastMRI E2E-VarNet (learned SME)
-    from mrrecon.engine.varnet import VarNetTrainer
+    from mrrecon.supervised.dc import VarNetTrainer
     VarNetTrainer(cfg).train()
 
 
 def _run_ssdu(cfg, args):
-    from mrrecon.engine.ssdu import SSDUTrainer
+    from mrrecon.self_supervised.ssdu import SSDUTrainer
     SSDUTrainer(cfg).train()
 
 
 def _run_zeroshot(cfg, args):
-    from mrrecon.engine.zeroshot import ZeroShotTrainer
+    from mrrecon.zero_shot.zsssl import ZeroShotTrainer
     ZeroShotTrainer(cfg, split=args.split).train() 
 
 
 def _run_zeroshot_infer(cfg, args):
-    from mrrecon.engine.zeroshot import ZeroShotTrainer
+    from mrrecon.zero_shot.zsssl import ZeroShotTrainer
     ZeroShotTrainer(cfg, split=args.split).infer(args.ckpt)
 
 
 def _run_sscu(cfg, args):
-    from mrrecon.engine.sscu import SSCUTrainer
+    from mrrecon.self_supervised.sscu import SSCUTrainer
     SSCUTrainer(cfg).train()
 
 
 def _run_diffusion(cfg, args):
-    from mrrecon.engine.diffusion import DiffusionTrainer
+    from mrrecon.zero_shot.diffusion import DiffusionTrainer
     DiffusionTrainer(cfg).train()
 
 
 def _run_eval(cfg, args):
-    from mrrecon.engine.evaluator import Evaluator
+    from mrrecon.eval.evaluator import Evaluator
     Evaluator(cfg, method=args.method, ckpt=args.ckpt,
               split=args.split, save_figs=args.save_figs).evaluate()
 
@@ -128,7 +124,7 @@ def main():
     cfg = config_from_args(args)
     runner = COMMANDS[args.command][0]
 
-    from mrrecon.engine.common import start_file_logging
+    from mrrecon.core.common import start_file_logging
     log_path = start_file_logging(cfg)      # tee stdout/stderr -> runs/<run_name>/log.txt
     mod = f" modality={cfg.modality}" if cfg.modality else ""
     print(f">>> mrrecon {args.command} | tissue={cfg.tissue}{mod} acc={cfg.acc_rate} "

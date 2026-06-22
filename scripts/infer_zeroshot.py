@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 warnings.filterwarnings("ignore")
 
 from mrrecon.config import build_parser, config_from_args
-from mrrecon.engine.zeroshot import ZeroShotTrainer
+from mrrecon.zero_shot.zsssl import ZeroShotTrainer
 
 
 def main():

@@ -1,11 +1,4 @@
-"""Supervised E2E-VarNet training: multi-coil k-space -> RSS image.
-
-VarNet outputs in the RSS domain, the same domain as the fastMRI ground truth,
-so the RSS metrics have no SENSE-vs-RSS ceiling (a perfect recon reaches SSIM
-1.0) and are directly leaderboard-comparable. The refinement CNN is the toolkit
-U-Net (``--cnn unet``) or the hierarchical Mamba backbone (``--cnn mamba``);
-the official E2E-VarNet (learned SME) is selected by the ``varnet`` method.
-"""
+"""Supervised U-Net training: zero-filled SENSE image -> fully-sampled image."""
 
 from __future__ import annotations
 
@@ -16,16 +9,17 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from ..data.loaders import list_slice_files
-from ..data.datasets import VarNetDataset
-from ..models.varnet import build_recon
+from ..data.loaders import list_slice_files, read_slice
+from ..data.datasets import SupervisedDataset
+from ..models import build_supervised
 from ..losses import SupervisedLoss
 from ..metrics import all_metrics
-from .common import (save_curves, save_mask_preview, set_seed, get_device, acc_dir,
+from ..core.common import (save_curves, save_mask_preview, set_seed, get_device, acc_dir,
                      save_checkpoint, save_json, center_crop)
+from ..data.transforms import r2c_np
 
 
-class VarNetTrainer:
+class SupervisedTrainer:
     def __init__(self, cfg):
         self.cfg = cfg
         self.device = get_device(cfg.device)
@@ -34,29 +28,22 @@ class VarNetTrainer:
         cfg = self.cfg
         tr = list_slice_files(cfg.data_root, cfg.tissue, "train", cfg.max_slices, cfg.modality, cfg.full_subject)
         va = list_slice_files(cfg.data_root, cfg.tissue, "val", cfg.max_slices, cfg.modality, cfg.full_subject)
-        self.train_dl = DataLoader(VarNetDataset(cfg, tr, train=True),
-                                   batch_size=cfg.batch_size, shuffle=True,
-                                   num_workers=cfg.num_workers)
-        self.val_dl = DataLoader(VarNetDataset(cfg, va, train=False),
-                                 batch_size=1, shuffle=False, num_workers=cfg.num_workers)
-        self.model = build_recon(cfg).to(self.device)
-        if getattr(cfg, "varnet_official", False):
-            self.tag = (f"varnet(official-SME) cascades={cfg.varnet_cascades} loss={cfg.loss}")
-        else:
-            self.tag = (f"dccnn cnn={cfg.cnn} cascades={cfg.dc_cascades} loss={cfg.loss}")
-        self.tag += (f" | acc={cfg.acc_rate} acs={cfg.acs_lines} "
-                     f"mask={cfg.mask_type} data={'full' if cfg.full_subject else 'central'}")
+
+        self.train_ds = SupervisedDataset(cfg, tr, train=True)
+        self.val_ds = SupervisedDataset(cfg, va, train=False)
+        self.train_dl = DataLoader(self.train_ds, batch_size=cfg.batch_size,
+                                   shuffle=True, num_workers=cfg.num_workers)
+        self.val_dl = DataLoader(self.val_ds, batch_size=cfg.batch_size,
+                                 shuffle=False, num_workers=cfg.num_workers)
+
+        self.model = build_supervised(cfg).to(self.device)
+        self.tag = (f"supervised arch={cfg.arch} target={cfg.sup_target} loss={cfg.loss} "
+                    f"| acc={cfg.acc_rate} acs={cfg.acs_lines} mask={cfg.mask_type} "
+                    f"data={'full' if cfg.full_subject else 'central'}")
         print(f"[train] {self.tag} | tissue={cfg.tissue} modality={cfg.modality or 'all'} "
               f"| train {len(tr)} / val {len(va)} slices")
         self.optim = torch.optim.Adam(self.model.parameters(), lr=cfg.lr)
         self.loss_fn = SupervisedLoss(kind=cfg.loss, ssim_weight=cfg.ssim_weight).to(self.device)
-
-    def _recon(self, batch):
-        mk = batch["masked_kspace"].to(self.device)
-        sens = batch["sens"].to(self.device)
-        mask = batch["mask"].to(self.device)
-        rss = self.model.reconstruct(mk, sens, mask).unsqueeze(1)      # (B,1,H,W)
-        return rss
 
     @torch.no_grad()
     def _validate(self):
@@ -64,12 +51,19 @@ class VarNetTrainer:
         mets = {"ssim": [], "psnr": [], "nmse": [], "nmae": []}
         losses = []
         for batch in self.val_dl:
+            x = batch["x_in"].to(self.device)
             tgt = batch["target"].to(self.device)
-            out = self._recon(batch)
-            losses.append(self.loss_fn(out, tgt).item())
-            o = out.cpu().numpy(); t = tgt.cpu().numpy()
-            for b in range(o.shape[0]):
-                m = all_metrics(center_crop(t[b, 0]), center_crop(o[b, 0]))  # RSS vs RSS
+            out_t = self.model(x)
+            losses.append(self.loss_fn(out_t, tgt).item())     # validation loss (same loss fn)
+            out = out_t.cpu().numpy()
+            tgt_np = tgt.cpu().numpy()
+            for b in range(out.shape[0]):
+                if out.shape[1] == 1:                       # rss target: magnitude
+                    recon = np.abs(out[b, 0]); ref = np.abs(tgt_np[b, 0])
+                else:                                       # sense target: complex
+                    recon = np.abs(r2c_np(out[b], axis=0))
+                    ref = np.abs(r2c_np(tgt_np[b], axis=0))
+                m = all_metrics(center_crop(ref), center_crop(recon))
                 for k in mets:
                     mets[k].append(m[k])
         result = {k: float(np.nanmean(v)) for k, v in mets.items()}
@@ -81,11 +75,8 @@ class VarNetTrainer:
         self._build()
         rdir = acc_dir(self.cfg)
         save_json(self.cfg.to_dict(), os.path.join(rdir, "config.json"))
-        from ..data.loaders import peek_shape
-        _, H, W = peek_shape(self.cfg.data_root, self.cfg.tissue, "train", self.cfg.full_subject)
-        if self.cfg.crop_size > 0:
-            H = W = self.cfg.crop_size
-        save_mask_preview(rdir, self.cfg, (H, W))
+        k0, _, _ = read_slice(self.train_ds.files[0], crop_size=self.cfg.crop_size)
+        save_mask_preview(rdir, self.cfg, k0.shape[1:])
 
         history, best = [], -1.0
         n = len(self.train_dl)
@@ -94,14 +85,15 @@ class VarNetTrainer:
             self.model.train()
             t0, ep_loss = time.time(), 0.0
             for i, batch in enumerate(self.train_dl):
+                x = batch["x_in"].to(self.device)
                 tgt = batch["target"].to(self.device)
-                out = self._recon(batch)
+                out = self.model(x)
                 loss = self.loss_fn(out, tgt)
                 self.optim.zero_grad()
                 loss.backward()
                 self.optim.step()
                 ep_loss += loss.item()
-                if i % 25 == 0:
+                if i % 50 == 0:
                     print(f"  [ep {epoch+1}] {i}/{n} loss={loss.item():.5f}")
 
             val = self._validate()
@@ -126,8 +118,7 @@ class VarNetTrainer:
                         title=f"{self.cfg.run_name} | {self.tag}")
 
         train_seconds = time.time() - train_t0
-        method_name = "varnet" if getattr(self.cfg, "varnet_official", False) else "dccnn"
-        save_json({"phase": "train", "method": method_name, "tag": self.tag,
+        save_json({"phase": "train", "method": "supervised", "tag": self.tag,
                    "epochs": len(history), "train_seconds": round(train_seconds, 2),
                    "sec_per_epoch": round(train_seconds / max(len(history), 1), 2)},
                   os.path.join(rdir, "timing.json"))

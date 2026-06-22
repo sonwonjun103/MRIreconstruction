@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 warnings.filterwarnings("ignore")
 
 from mrrecon.config import build_parser, config_from_args
-from mrrecon.engine.evaluator import Evaluator
+from mrrecon.eval.evaluator import Evaluator
 
 
 def main():

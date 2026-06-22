@@ -8,12 +8,12 @@ It can reuse the existing machinery:
   * data         : mrrecon.data.datasets (e.g. a variant of SSDUDataset)
   * model        : mrrecon.models.build_unrolled (ssdu/mymodel/mamba)
   * loss / DC    : mrrecon.losses.MixL1L2Loss, mrrecon.models.data_consistency
-  * validation   : mrrecon.engine.inference.recon_unrolled
+  * validation   : mrrecon.core.inference.recon_unrolled
 """
 
 from __future__ import annotations
 
-from .common import get_device
+from ..core.common import get_device
 
 
 class SSCUTrainer:
