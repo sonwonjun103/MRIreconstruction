@@ -38,8 +38,8 @@ class Config:
     # ---- undersampling (the *acquisition* mask Omega) ----
     acc_rate: int = 4
     acs_lines: int = 24
-    mask_type: str = "vds"             # "random" | "gaussian1d" | "vds"
-    vds_power: float = 2.0                # variable-density polynomial power (mask_type=vds)
+    mask_type: str = "vds_lustig"         # "random" | "gaussian1d" | "vds" | "vds_lustig" (default)
+    vds_power: float = 2.0                # variable-density polynomial power (mask_type=vds/vds_lustig)
 
     # ---- SSDU mask splitting (Omega -> train Theta / loss Lambda) ----
     divide_method: str = "Gaussian_selection"  # or "uniform_selection"
@@ -157,11 +157,11 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     g = parser.add_argument_group("undersampling")
     g.add_argument("--acc_rate", type=int, default=4)
     g.add_argument("--acs_lines", type=int, default=24)
-    g.add_argument("--mask_type", default="random",
+    g.add_argument("--mask_type", default="vds_lustig",
                    choices=["random", "gaussian1d", "vds", "vds_lustig"],
-                   help="undersampling pattern: random (uniform), gaussian1d/vds "
-                        "(variable density, center-weighted), vds_lustig (Lustig "
-                        "SparseMRI genPDF+genSampling, incoherence-optimised)")
+                   help="undersampling pattern (default vds_lustig = Lustig SparseMRI "
+                        "genPDF+genSampling, incoherence-optimised). Others: random "
+                        "(uniform), gaussian1d/vds (variable density, center-weighted)")
     g.add_argument("--vds_power", type=float, default=3.0,
                    help="variable-density polynomial power for --mask_type vds/vds_lustig")
 
