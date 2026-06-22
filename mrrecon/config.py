@@ -158,11 +158,12 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     g.add_argument("--acc_rate", type=int, default=4)
     g.add_argument("--acs_lines", type=int, default=24)
     g.add_argument("--mask_type", default="random",
-                   choices=["random", "gaussian1d", "vds"],
+                   choices=["random", "gaussian1d", "vds", "vds_lustig"],
                    help="undersampling pattern: random (uniform), gaussian1d/vds "
-                        "(variable density, center-weighted)")
+                        "(variable density, center-weighted), vds_lustig (Lustig "
+                        "SparseMRI genPDF+genSampling, incoherence-optimised)")
     g.add_argument("--vds_power", type=float, default=3.0,
-                   help="variable-density polynomial power for --mask_type vds")
+                   help="variable-density polynomial power for --mask_type vds/vds_lustig")
 
     g = parser.add_argument_group("optim")
     g.add_argument("--batch_size", type=int, default=1)

@@ -17,11 +17,73 @@ import numpy as np
 
 
 # --------------------------------------------------------------------------- #
+# Lustig SparseMRI variable-density sampling (genPDF + genSampling, MRM 2007)
+# ported from M. Lustig's SparseMRI_v0.2 toolbox, 1-D Cartesian PE version.
+# --------------------------------------------------------------------------- #
+def gen_pdf_1d(n, p, pctg, radius):
+    """Lustig genPDF (1-D). Variable-density sampling probability over n columns.
+
+    pdf(k) = (1-|k|)^p + alpha, clipped to [0,1], with the central ``radius``
+    fraction forced to 1 (fully-sampled ACS). ``alpha`` is found by bisection so
+    that ``sum(pdf) == floor(pctg*n)`` -- i.e. the expected number of samples
+    matches the target acceleration. ``p`` is the polynomial density power.
+    """
+    r = np.abs(np.linspace(-1.0, 1.0, n))
+    idx = r < radius
+    base = (1.0 - r) ** p
+    target = int(np.floor(pctg * n))
+
+    pdf = np.clip(base, 0, 1); pdf[idx] = 1.0
+    if int(np.floor(pdf.sum())) > target:                # forced centre already too big
+        return pdf
+    lo, hi = 0.0, 1.0
+    pdf_out = pdf
+    for _ in range(40):                                  # bisection on alpha
+        val = 0.5 * (lo + hi)
+        pdf = base + val
+        pdf[pdf > 1] = 1.0
+        pdf[idx] = 1.0
+        N = int(np.floor(pdf.sum()))
+        pdf_out = pdf
+        if N > target:
+            hi = val
+        elif N < target:
+            lo = val
+        else:
+            break
+    return pdf_out
+
+
+def gen_sampling_1d(pdf, n_iter=80, tol=1.0,
+                    rng: np.random.Generator | None = None):
+    """Lustig genSampling (1-D). Monte-Carlo draw of a binary mask from ``pdf``
+    that minimises the peak interference of the transform point-spread function
+    ``max|ifft(mask/pdf)|`` (off-DC) -- i.e. the most incoherent realisation."""
+    if rng is None:
+        rng = np.random.default_rng()
+    pdf = np.clip(pdf, 1e-6, 1.0)
+    K = pdf.sum()
+    best, best_intr = None, np.inf
+    for _ in range(n_iter):
+        tmp = (rng.random(pdf.shape) < pdf).astype(np.float64)
+        tries = 0
+        while abs(tmp.sum() - K) > tol and tries < 50:   # match target sample count
+            tmp = (rng.random(pdf.shape) < pdf).astype(np.float64)
+            tries += 1
+        TMP = np.fft.ifft(tmp / pdf)
+        intr = float(np.max(np.abs(TMP[1:])))            # peak off-DC sidelobe
+        if intr < best_intr:
+            best_intr, best = intr, tmp.copy()
+    return best if best is not None else (rng.random(pdf.shape) < pdf).astype(np.float64)
+
+
+# --------------------------------------------------------------------------- #
 # acquisition mask Omega
 # --------------------------------------------------------------------------- #
 def undersampling_mask(shape_hw, acc_rate=4, acs_lines=24, mask_type="random",
                        rng: np.random.Generator | None = None,
-                       vds_power: float = 3.0) -> np.ndarray:
+                       vds_power: float = 3.0,
+                       lustig_iter: int = 80) -> np.ndarray:
     """1-D Cartesian undersampling mask, returned as a 2-D (H, W) float array.
 
     Columns (the W / phase-encode axis) are subsampled; every row keeps the same
@@ -33,6 +95,10 @@ def undersampling_mask(shape_hw, acc_rate=4, acs_lines=24, mask_type="random",
       * ``gaussian1d``: variable density, prob ∝ exp(-4|k|)        (center-weighted)
       * ``vds``       : variable density, prob ∝ (1-|k|)**vds_power (polynomial;
                         larger power -> more concentrated near the centre)
+      * ``vds_lustig``: Lustig SparseMRI VDS -- genPDF (polynomial density,
+                        ``vds_power``) + genSampling (Monte-Carlo incoherence
+                        optimisation, ``lustig_iter`` draws). Sample count is
+                        ~W/acc_rate (not exact); ACS forced fully sampled.
     """
     H, W = shape_hw
     if rng is None:
@@ -42,6 +108,14 @@ def undersampling_mask(shape_hw, acc_rate=4, acs_lines=24, mask_type="random",
     c1 = c0 + acs_lines
     mask_1d = np.zeros(W, dtype=np.float32)
     mask_1d[c0:c1] = 1.0
+
+    # Lustig genPDF + genSampling: draw the whole mask probabilistically and pick
+    # the most incoherent realisation, rather than an exact-count outer selection.
+    if mask_type == "vds_lustig":
+        pdf = gen_pdf_1d(W, p=vds_power, pctg=1.0 / acc_rate, radius=acs_lines / W)
+        mask_1d = gen_sampling_1d(pdf, n_iter=lustig_iter, rng=rng).astype(np.float32)
+        mask_1d[c0:c1] = 1.0                              # guarantee ACS fully sampled
+        return np.broadcast_to(mask_1d[None, :], (H, W)).astype(np.float32).copy()
 
     n_keep = max(int(round(W / acc_rate)), acs_lines)
     n_rand = max(n_keep - acs_lines, 0)
