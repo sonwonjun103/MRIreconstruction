@@ -136,8 +136,9 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
 
     g = parser.add_argument_group("data")
     g.add_argument("--data_root", default=DEFAULT_DATA_ROOT)
-    g.add_argument("--tissue", required=True, choices=["knee", "brain"],
-                   help="tissue type; selects the {tissue} dataset folder")
+    g.add_argument("--tissue", required=True,
+                   help="dataset folder name under {data_root} (e.g. knee, brain, "
+                        "knee_small); selects {data_root}/{tissue}/{split}")
     g.add_argument("--modality", default="",
                    help="brain only: restrict to one MRI modality "
                         "(AXFLAIR/AXT1/AXT1POST/AXT1PRE/AXT2). Empty = all modalities.")
