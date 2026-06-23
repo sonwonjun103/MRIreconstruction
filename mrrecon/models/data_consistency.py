@@ -15,7 +15,6 @@ import torch
 
 from ..data.transforms import fft2c, ifft2c, c2r_chw, r2c_chw, c2r_last
 
-
 def _zdot(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     """Real part of the complex inner product <a, b>, summed over all dims."""
     return (torch.conj(a) * b).sum().real

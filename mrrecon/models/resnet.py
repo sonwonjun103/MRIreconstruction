@@ -16,7 +16,7 @@ def _conv(in_ch, out_ch, activation=True):
     if activation:
         layers.append(nn.ReLU(inplace=True))
     return nn.Sequential(*layers)
-
+ 
 
 class _ResBlock(nn.Module):
     def __init__(self, features):

@@ -16,7 +16,7 @@ import torch
 import torch.nn as nn
 
 from .resnet import ResNetDenoiser
-from .data_consistency import dc_block, to_loss_kspace
+from .data_consistency import dc_block, to_loss_kspace 
 
 
 class UnrolledSSDU(nn.Module):
