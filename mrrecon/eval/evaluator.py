@@ -212,7 +212,7 @@ class Evaluator:
 
             per_slice.append(row)
             if self.save_figs:
-                figbase = os.path.join(rdir, f"figs_{self._method_tag()}")
+                figbase = os.path.join(rdir, "result", self._method_tag())
                 # vs SENSE reference -> figs_<method>/sense/
                 self._save_comparison(os.path.join(figbase, "sense"), i,
                                       rc, zc, rec, m, mzf, "SENSE", mask=omega)
