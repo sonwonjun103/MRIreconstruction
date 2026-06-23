@@ -82,22 +82,30 @@ class Evaluator:
         model.eval()
         return model
 
-    def _save_fig(self, rdir, idx, ref, zf, recon, m, mask=None, mzf=None,
-                  rss=None, m_rss=None):
+    def _method_tag(self):
+        """Folder name for this method+model, e.g. 'supervised_unet_rss', 'dccnn_unet'."""
+        cfg = self.cfg
+        if self.method == "supervised":
+            return f"supervised_{cfg.arch}_{cfg.sup_target}"
+        if self.method == "dccnn":
+            return f"dccnn_{cfg.cnn}"
+        if self.method in ("ssdu", "zeroshot"):
+            return f"{self.method}_{cfg.model}"
+        return self.method
+
+    def _save_comparison(self, base, idx, ref, zf, recon, m_recon, m_zf,
+                         ref_name, mask=None):
+        """One figure: [reference | zero-filled | recon | mask] against a single
+        reference (RSS or SENSE). Saved under <base>/slice_NNN.png."""
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        vmax = 0.6 * ref.max()
-        zf_title = "zero-filled"
-        if mzf is not None:
-            zf_title += f"  ssim={mzf['ssim']:.3f} psnr={mzf['psnr']:.2f}"
-        rec_title = f"recon (vs SENSE)  ssim={m['ssim']:.3f} psnr={m['psnr']:.2f}"
-        if m_rss is not None:
-            rec_title += f"\n(vs RSS)  ssim={m_rss['ssim']:.3f} psnr={m_rss['psnr']:.2f}"
-        panels = [(ref, "fully-sampled reference", vmax)]
-        if rss is not None:
-            panels.append((rss, "RSS ground truth", 0.6 * rss.max()))
-        panels += [(zf, zf_title, vmax), (recon, rec_title, vmax)]
+        vmax = 0.6 * ref.max() if ref.max() > 0 else None
+        panels = [
+            (ref,   f"{ref_name} reference", vmax),
+            (zf,    f"zero-filled\nssim={m_zf['ssim']:.3f} psnr={m_zf['psnr']:.2f}", vmax),
+            (recon, f"recon (vs {ref_name})\nssim={m_recon['ssim']:.3f} psnr={m_recon['psnr']:.2f}", vmax),
+        ]
         if mask is not None:
             panels.append((mask, "mask (Omega)", 1.0))
         fig, ax = plt.subplots(1, len(panels), figsize=(5 * len(panels), 6))
@@ -105,10 +113,9 @@ class Evaluator:
             a.imshow(im, cmap="gray", vmax=vm)
             a.set_title(t, fontsize=10)
             a.axis("off")
-        fdir = os.path.join(rdir, "figs")
-        os.makedirs(fdir, exist_ok=True)
+        os.makedirs(base, exist_ok=True)
         plt.tight_layout()
-        plt.savefig(os.path.join(fdir, f"slice_{idx:03d}.png"), dpi=120)
+        plt.savefig(os.path.join(base, f"slice_{idx:03d}.png"), dpi=120)
         plt.close(fig)
 
     def _save_metric_curves(self, rdir, per_slice, has_rss):
@@ -205,9 +212,17 @@ class Evaluator:
 
             per_slice.append(row)
             if self.save_figs:
-                rss_disp = None if rss_i is None else center_crop(np.abs(rss_i), rec.shape[-1])
-                self._save_fig(rdir, i, ref, zf, recon, m, mask=omega, mzf=mzf,
-                               rss=rss_disp, m_rss=m_rss)
+                figbase = os.path.join(rdir, f"figs_{self._method_tag()}")
+                # vs SENSE reference -> figs_<method>/sense/
+                self._save_comparison(os.path.join(figbase, "sense"), i,
+                                      rc, zc, rec, m, mzf, "SENSE", mask=omega)
+                # vs RSS ground truth (scale-matched) -> figs_<method>/rss/
+                if m_rss is not None:
+                    rss_ref = center_crop(np.abs(rss_i), rec.shape[-1])
+                    self._save_comparison(os.path.join(figbase, "rss"), i,
+                                          rss_ref, _match_scale(rss_ref, zc),
+                                          _match_scale(rss_ref, rec),
+                                          m_rss, mzf_rss, "RSS", mask=omega)
             if i % 20 == 0:
                 extra = "" if m_rss is None else (f" | vs RSS ssim={m_rss['ssim']:.4f} "
                                                   f"psnr={m_rss['psnr']:.3f}")

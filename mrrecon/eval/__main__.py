@@ -44,8 +44,13 @@ def main() -> None:
     cfg = config_from_args(args)
 
     ckpt = args.ckpt
-    if ckpt is None and args.run:           # --run convenience -> best.pt
-        ckpt = os.path.join(args.run, f"acc{cfg.acc_rate}", "best.pt")
+    if args.run:                            # --run convenience
+        if ckpt is None:                    # -> checkpoint = <run>/acc<acc>/best.pt
+            ckpt = os.path.join(args.run, f"acc{cfg.acc_rate}", "best.pt")
+        if args.run_name == "run":          # -> write eval results into the model's run dir
+            run = os.path.normpath(args.run)
+            cfg.run_name = os.path.basename(run)
+            cfg.out_dir = os.path.dirname(run) or "./runs"
     if args.method != "sense" and not ckpt:
         raise SystemExit("eval: --method %s needs --ckpt or --run" % args.method)
 
