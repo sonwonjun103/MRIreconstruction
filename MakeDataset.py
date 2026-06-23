@@ -87,7 +87,7 @@ KEEP_SHAPE = {"knee": (15, 640, 368), "brain": (None, 640, 320)}
 
 # --------------------------------------------------------------------------- #
 # BART ESPIRiT
-# --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- # 
 os.environ["TOOLBOX_PATH"] = BART_PATH
 os.environ["PATH"] = BART_PATH + os.pathsep + os.environ.get("PATH", "")
 sys.path.insert(0, os.path.join(BART_PATH, "python"))
