@@ -30,6 +30,10 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--run", default=None,
                    help="run dir; checkpoint = <run>/acc<acc_rate>/best.pt")
+    p.add_argument("--reference", default="cgsense", choices=["cgsense", "zerofilled"],
+                   help="(--split test_challenge only) SENSE-based reference for metrics: "
+                        "cgsense (CG-SENSE de-aliased; recommended) or zerofilled "
+                        "(aliased SENSE coil-combination). NOT a ground truth either way.")
     _add_common(p)
     _add_eval(p)            # --method (required) / --ckpt / sense_* / --save_figs
     _add_split(p)
@@ -54,10 +58,17 @@ def main() -> None:
     if args.method != "sense" and not ckpt:
         raise SystemExit("eval: --method %s needs --ckpt or --run" % args.method)
 
-    from mrrecon.eval.evaluator import Evaluator
-    ev = Evaluator(cfg, method=args.method, ckpt=ckpt,
-                   split=args.split, save_figs=args.save_figs)
-    launch(cfg, f"eval:{args.method}", ev.evaluate)
+    if args.split == "test_challenge":      # prospectively undersampled, no GT
+        from mrrecon.eval.challenge import ChallengeInference
+        ci = ChallengeInference(cfg, method=args.method, ckpt=ckpt,
+                                split=args.split, save_figs=args.save_figs,
+                                reference=args.reference)
+        launch(cfg, f"challenge:{args.method}", ci.run)
+    else:
+        from mrrecon.eval.evaluator import Evaluator
+        ev = Evaluator(cfg, method=args.method, ckpt=ckpt,
+                       split=args.split, save_figs=args.save_figs)
+        launch(cfg, f"eval:{args.method}", ev.evaluate)
 
 
 if __name__ == "__main__":
