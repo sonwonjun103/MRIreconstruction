@@ -64,7 +64,8 @@ class ChallengeInference(Evaluator):
         cfg = self.cfg
         model = self._build_model()
         files = list_slice_files(cfg.data_root, cfg.tissue, self.split,
-                                 cfg.max_slices, cfg.modality, cfg.full_subject)
+                                 cfg.max_slices, cfg.modality, cfg.full_subject,
+                                 drop_edge=cfg.drop_edge_slices)
         rdir = os.path.join(cfg.out_dir, cfg.run_name, f"acc_challenge")
         os.makedirs(rdir, exist_ok=True)
         print(f"challenge inference -> {os.path.abspath(rdir)}")

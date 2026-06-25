@@ -163,7 +163,7 @@ class Evaluator:
     def evaluate(self):
         cfg = self.cfg
         model = self._build_model()
-        files = list_slice_files(cfg.data_root, cfg.tissue, self.split, cfg.max_slices, cfg.modality, cfg.full_subject)
+        files = list_slice_files(cfg.data_root, cfg.tissue, self.split, cfg.max_slices, cfg.modality, cfg.full_subject, drop_edge=cfg.drop_edge_slices)
         # results go under runs/<run_name>/acc{acc_rate}/ so different
         # accelerations of the same run are kept separately
         rdir = acc_dir(cfg)

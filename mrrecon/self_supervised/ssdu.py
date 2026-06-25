@@ -34,8 +34,8 @@ class SSDUTrainer:
 
     def _build(self):
         cfg = self.cfg
-        tr = list_slice_files(cfg.data_root, cfg.tissue, "train", cfg.max_slices, cfg.modality, cfg.full_subject)
-        self.val_files = list_slice_files(cfg.data_root, cfg.tissue, "val", cfg.max_slices, cfg.modality, cfg.full_subject)
+        tr = list_slice_files(cfg.data_root, cfg.tissue, "train", cfg.max_slices, cfg.modality, cfg.full_subject, drop_edge=cfg.drop_edge_slices)
+        self.val_files = list_slice_files(cfg.data_root, cfg.tissue, "val", cfg.max_slices, cfg.modality, cfg.full_subject, drop_edge=cfg.drop_edge_slices)
         self.train_ds = SSDUDataset(cfg, tr, train=True)
         self.train_dl = DataLoader(self.train_ds, batch_size=cfg.batch_size,
                                    shuffle=True, num_workers=cfg.num_workers)

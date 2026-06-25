@@ -26,8 +26,8 @@ class SupervisedTrainer:
 
     def _build(self):
         cfg = self.cfg
-        tr = list_slice_files(cfg.data_root, cfg.tissue, "train", cfg.max_slices, cfg.modality, cfg.full_subject)
-        va = list_slice_files(cfg.data_root, cfg.tissue, "val", cfg.max_slices, cfg.modality, cfg.full_subject)
+        tr = list_slice_files(cfg.data_root, cfg.tissue, "train", cfg.max_slices, cfg.modality, cfg.full_subject, drop_edge=cfg.drop_edge_slices)
+        va = list_slice_files(cfg.data_root, cfg.tissue, "val", cfg.max_slices, cfg.modality, cfg.full_subject, drop_edge=cfg.drop_edge_slices)
 
         self.train_ds = SupervisedDataset(cfg, tr, train=True)
         self.val_ds = SupervisedDataset(cfg, va, train=False)

@@ -29,6 +29,7 @@ class Config:
     tissue: Optional[str] = None          # "knee" or "brain" -- required
     modality: str = ""                    # brain only: AXFLAIR/AXT1/AXT1POST/... ("" = all)
     n_coils: int = 15
+    drop_edge_slices: int = 0             # drop first/last N slices of each volume (edges)
     max_slices: int = -1                  # -1 = use all; >0 = subset (debug/speed)
     full_subject: bool = False            # True -> use {tissue}_full (all slices/subject);
                                           # False -> {tissue} (central slices only)
@@ -143,6 +144,9 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
                    help="brain only: restrict to one MRI modality "
                         "(AXFLAIR/AXT1/AXT1POST/AXT1PRE/AXT2). Empty = all modalities.")
     g.add_argument("--n_coils", type=int, default=15)
+    g.add_argument("--drop_edge_slices", type=int, default=0,
+                   help="drop the first/last N slices of EACH volume (low-anatomy "
+                        "edge slices); applies to every split")
     g.add_argument("--max_slices", type=int, default=-1,
                    help="-1 uses all slices; a positive value subsets for speed")
     g.add_argument("--full_subject", action="store_true",

@@ -38,7 +38,7 @@ class ZeroShotTrainer:
 
     def _build(self):
         cfg = self.cfg
-        files = list_slice_files(cfg.data_root, cfg.tissue, self.split, modality=cfg.modality, full=cfg.full_subject)
+        files = list_slice_files(cfg.data_root, cfg.tissue, self.split, modality=cfg.modality, full=cfg.full_subject, drop_edge=cfg.drop_edge_slices)
         idx = (len(files) // 2) if cfg.zs_slice < 0 else cfg.zs_slice
         idx = int(np.clip(idx, 0, len(files) - 1))
         self.slice_idx = idx

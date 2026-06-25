@@ -32,8 +32,8 @@ class VarNetTrainer:
 
     def _build(self):
         cfg = self.cfg
-        tr = list_slice_files(cfg.data_root, cfg.tissue, "train", cfg.max_slices, cfg.modality, cfg.full_subject)
-        va = list_slice_files(cfg.data_root, cfg.tissue, "val", cfg.max_slices, cfg.modality, cfg.full_subject)
+        tr = list_slice_files(cfg.data_root, cfg.tissue, "train", cfg.max_slices, cfg.modality, cfg.full_subject, drop_edge=cfg.drop_edge_slices)
+        va = list_slice_files(cfg.data_root, cfg.tissue, "val", cfg.max_slices, cfg.modality, cfg.full_subject, drop_edge=cfg.drop_edge_slices)
         self.train_dl = DataLoader(VarNetDataset(cfg, tr, train=True),
                                    batch_size=cfg.batch_size, shuffle=True,
                                    num_workers=cfg.num_workers)

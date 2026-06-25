@@ -30,14 +30,33 @@ def split_dir(data_root: str, tissue: str, split: str, full: bool = False) -> st
     return os.path.join(data_root, tissue, split)
 
 
+def _drop_edge_slices(files, n: int):
+    """Drop the first n and last n slices of EACH volume (low-anatomy edge slices).
+    Volumes with <= 2n slices are kept whole (too few to trim). Filenames are
+    ``{volume}_{slice:03d}.h5`` so sorting groups+orders slices within a volume."""
+    if n <= 0:
+        return files
+    import collections
+    by = collections.defaultdict(list)
+    for f in files:
+        by[os.path.basename(f).rsplit("_", 1)[0]].append(f)
+    out = []
+    for vol, fl in by.items():
+        fl = sorted(fl)
+        out.extend(fl[n:len(fl) - n] if len(fl) > 2 * n else fl)
+    return sorted(out)
+
+
 def list_slice_files(data_root: str, tissue: str, split: str = "train",
-                     max_slices: int = -1, modality: str = "", full: bool = False):
+                     max_slices: int = -1, modality: str = "", full: bool = False,
+                     drop_edge: int = 0):
     """Sorted list of per-slice .h5 paths for one split.
 
     ``modality`` (brain only) restricts to files of one MRI modality, matched on
     the ``_<MODALITY>_`` token in the filename (e.g. ``file_brain_AXT1POST_...``).
     The underscores make it exact: 'AXT1' does not match 'AXT1POST'/'AXT1PRE'.
-    ``max_slices > 0`` keeps only the first N files (quick smoke tests).
+    ``drop_edge > 0`` removes the first/last N slices of each volume (low-anatomy
+    edges). ``max_slices > 0`` then keeps only the first N files (quick smoke tests).
     """
     d = split_dir(data_root, tissue, split, full)
     files = sorted(glob.glob(os.path.join(d, "*.h5")))
@@ -51,6 +70,7 @@ def list_slice_files(data_root: str, tissue: str, split: str = "train",
             avail = available_modalities(data_root, tissue, split, full)
             raise FileNotFoundError(
                 f"no '{modality}' slices in {d}. available: {avail}")
+    files = _drop_edge_slices(files, drop_edge)
     if max_slices and max_slices > 0:
         files = files[:max_slices]
     return files
