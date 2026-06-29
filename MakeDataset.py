@@ -222,6 +222,7 @@ def save_preview_png(path, rss_slice):
 
 def save_slice(out_dir, volume, sidx, kspace_slice, rss_slice, save_png, crop=0,
                readout_mode="crop"):
+    full_slice = kspace_slice                              # keep full k-space for sens estimation
     if crop > 0:
         kspace_slice = crop_kspace_slice(kspace_slice, crop, readout_mode)   # (C,crop,crop)
         # 'crop' matches the official 320 rss (reuse it). 'evenodd' is shifted, so
@@ -229,7 +230,14 @@ def save_slice(out_dir, volume, sidx, kspace_slice, rss_slice, save_png, crop=0,
         if (readout_mode == "evenodd" or rss_slice is None
                 or tuple(rss_slice.shape) != (crop, crop)):
             rss_slice = rss_np(kspace_slice).astype(np.float32)
-    sens = espirit_sens_maps(kspace_slice).astype(np.complex64)
+    # ESPIRiT on the FULL k-space (object has the readout-oversampling margin, so it does
+    # not touch the FOV edge) then crop the maps -> avoids the FOV-edge artifact (a dark
+    # band in the SENSE combine) that 'crop -> ecalib' produces. For 'evenodd' (decimated
+    # readout) or no crop, estimate directly on the processed k-space.
+    if crop > 0 and readout_mode == "crop":
+        sens = center_crop_2d(espirit_sens_maps(full_slice), crop).astype(np.complex64)
+    else:
+        sens = espirit_sens_maps(kspace_slice).astype(np.complex64)
     with h5.File(os.path.join(out_dir, f"{volume}_{sidx:03d}.h5"), "w") as f:
         f.create_dataset("kspace", data=kspace_slice.astype(np.complex64))
         f.create_dataset("sens_map", data=sens)
@@ -325,7 +333,11 @@ def build_challenge_volumes(tissue, vols, slices_per_vol, save_png, readout=320)
             accels.append(len(mask) / max(1, int(np.asarray(mask).sum())))
         for s in central_indices(kspace.shape[0], slices_per_vol):
             k = crop_readout_slice(kspace[s], readout)       # (C,readout,W)
-            sens = espirit_sens_maps(k, calib).astype(np.complex64)
+            # sens on FULL readout (object has oversampling margin) then crop readout ->
+            # avoids the FOV-edge artifact (same fix as save_slice).
+            H0 = kspace.shape[2]
+            top = max(0, (H0 - readout) // 2)
+            sens = espirit_sens_maps(kspace[s], calib)[:, top:top + readout, :].astype(np.complex64)
             with h5.File(os.path.join(out_dir, f"{volume}_{s:03d}.h5"), "w") as f:
                 f.create_dataset("kspace", data=k)
                 f.create_dataset("sens_map", data=sens)
