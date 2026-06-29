@@ -62,7 +62,8 @@ SAVE_ROOT = "/mnt/d/research/MRRecon"          # tissue folders live directly he
 # .h5 files is used; otherwise the matching ``{name}.tar.xz`` is extracted.
 SOURCES = {
     "knee": {
-        "train": ["knee_multicoil_train", "knee_multicoil_train_batch"],
+        "train": ["knee_multicoil_train", "knee_multicoil_train_batch",
+                  "knee_multicoil_train_batch_0/multicoil_train"],
         "val":   ["knee_multicoil_val", "multicoil_val"],
         "test":  ["knee_multicoil_test", "multicoil_test"],
     },
