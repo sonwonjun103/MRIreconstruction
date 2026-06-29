@@ -1,7 +1,8 @@
 
 ======================================================================
-[2026-06-29T21:19:23] cmd: /home/sonwonjun/research/MRRecon/code/mrrecon/zero_shot/__main__.py --algo zsssl --tissue knee --split test --zs_all --out_dir Results --run_name zs_ssl --max_slices 20 --nb_unroll_blocks 5 --res_blocks 4 --cg_iter 5 --epochs 50 --zs_patience 15 --zs_num_splits 8 --lr 5e-4 --save_figs --device cuda
+[2026-06-29T21:25:51] cmd: /home/sonwonjun/research/MRRecon/code/mrrecon/zero_shot/__main__.py --algo zsssl --tissue knee --split test --zs_all --zs_per_volume --out_dir Results --run_name zs_ssl --nb_unroll_blocks 5 --res_blocks 4 --cg_iter 5 --epochs 50 --zs_patience 15 --zs_num_splits 8 --lr 5e-4 --save_figs --device cuda
 ======================================================================
 >>> mrrecon zero_shot:zsssl-all | tissue=knee acc=4 run=zs_ssl | log -> Results/zs_ssl/log.txt
+[zs-all] per-volume mode: 1 central slice x 20 volumes
 [zs-all] ZS-SSL on EVERY test slice -> /home/sonwonjun/research/MRRecon/code/Results/zs_ssl
 [zs-all] 20 slices x per-scan fit (SLOW: each scan is trained from scratch)

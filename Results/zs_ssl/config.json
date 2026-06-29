@@ -8,7 +8,7 @@
   "modality": "",
   "n_coils": 15,
   "drop_edge_slices": 0,
-  "max_slices": 20,
+  "max_slices": -1,
   "full_subject": false,
   "crop_size": 320,
   "acc_rate": 4,

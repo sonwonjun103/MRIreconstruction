@@ -36,13 +36,17 @@ class ZeroShotTrainer:
         self.split = split
         self.device = get_device(cfg.device)
 
-    def _build(self):
+    def _build(self, slice_file=None):
         cfg = self.cfg
-        files = list_slice_files(cfg.data_root, cfg.tissue, self.split, modality=cfg.modality, full=cfg.full_subject, drop_edge=cfg.drop_edge_slices)
-        idx = (len(files) // 2) if cfg.zs_slice < 0 else cfg.zs_slice
-        idx = int(np.clip(idx, 0, len(files) - 1))
-        self.slice_idx = idx
-        self.slice_file = files[idx]
+        if slice_file is not None:                    # fit this exact file (used by train_all)
+            self.slice_idx = -1
+            self.slice_file = slice_file
+        else:
+            files = list_slice_files(cfg.data_root, cfg.tissue, self.split, modality=cfg.modality, full=cfg.full_subject, drop_edge=cfg.drop_edge_slices)
+            idx = (len(files) // 2) if cfg.zs_slice < 0 else cfg.zs_slice
+            idx = int(np.clip(idx, 0, len(files) - 1))
+            self.slice_idx = idx
+            self.slice_file = files[idx]
         self.kspace_slice, self.sens_slice, self.rss_slice = read_slice(
             self.slice_file, crop_size=cfg.crop_size)
 
@@ -190,15 +194,28 @@ class ZeroShotTrainer:
         if best_state is not None:
             self.model.load_state_dict(best_state)
 
-    def train_all(self, save_figs=False):
-        """Fit ZS-SSL independently on EVERY slice of the split and save each
+    def train_all(self, save_figs=False, per_volume=False):
+        """Fit ZS-SSL independently on each slice of the split and save each
         reconstruction + an aggregate summary under out_dir/run_name/
-        (e.g. ``Results/zs_ssl/``). Each scan is fit from scratch (true ZS-SSL)."""
+        (e.g. ``Results/zs_ssl/``). Each scan is fit from scratch (true ZS-SSL).
+
+        ``per_volume=True`` keeps only the CENTRAL slice of each volume (one slice
+        per subject) instead of every slice."""
         set_seed(self.cfg.seed)
         cfg = self.cfg
         files = list_slice_files(cfg.data_root, cfg.tissue, self.split,
-                                 max_slices=cfg.max_slices, modality=cfg.modality,
+                                 max_slices=-1, modality=cfg.modality,
                                  full=cfg.full_subject, drop_edge=cfg.drop_edge_slices)
+        if per_volume:
+            import collections
+            by = collections.defaultdict(list)
+            for f in files:
+                by[os.path.basename(f).rsplit("_", 1)[0]].append(f)
+            files = [sorted(v)[len(v) // 2] for v in by.values()]   # central slice per volume
+            files.sort()
+            print(f"[zs-all] per-volume mode: 1 central slice x {len(files)} volumes")
+        if cfg.max_slices and cfg.max_slices > 0:
+            files = files[:cfg.max_slices]
         base = os.path.join(cfg.out_dir, cfg.run_name)          # e.g. Results/zs_ssl
         recon_dir = os.path.join(base, "recon"); os.makedirs(recon_dir, exist_ok=True)
         fig_dir = os.path.join(base, "figs")
@@ -210,8 +227,7 @@ class ZeroShotTrainer:
 
         summary, t0 = [], time.time()
         for i in range(len(files)):
-            cfg.zs_slice = i
-            self._build()                                        # fresh model for slice i
+            self._build(slice_file=files[i])                     # fresh model for this exact file
             self._fit_inline()
             # SENSE-GT comparison: ref = SENSE combine of full k-space, zf = zero-filled
             ref, zf, recon = recon_unrolled(self.model, self.kspace_slice,

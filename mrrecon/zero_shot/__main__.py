@@ -37,6 +37,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "under out_dir/run_name (e.g. Results/zs_ssl). Slow.")
     p.add_argument("--save_figs", action="store_true",
                    help="(zsssl --zs_all) also save a per-slice comparison PNG")
+    p.add_argument("--zs_per_volume", action="store_true",
+                   help="(zsssl --zs_all) fit only the CENTRAL slice of each volume "
+                        "(one slice per subject) instead of every slice")
     _add_common(p)
     _add_split(p)
     _add_unrolled(p)
@@ -53,7 +56,8 @@ def main() -> None:
         from mrrecon.zero_shot.zsssl import ZeroShotTrainer
         trainer = ZeroShotTrainer(cfg, split=args.split)
         if args.zs_all:                       # fit every slice -> out_dir/run_name
-            run = lambda: trainer.train_all(save_figs=args.save_figs)
+            run = lambda: trainer.train_all(save_figs=args.save_figs,
+                                            per_volume=args.zs_per_volume)
             tag = "zero_shot:zsssl-all"
         elif args.ckpt:
             run = lambda: trainer.infer(args.ckpt)
