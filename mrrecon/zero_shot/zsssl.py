@@ -24,7 +24,7 @@ from ..data.datasets import ZeroShotDataset
 from ..data.masks import undersampling_mask
 from ..models import build_unrolled
 from ..losses import MixL1L2Loss
-from ..metrics import all_metrics
+from ..metrics import all_metrics, match_scale
 from ..core.common import (save_curves, save_mask_preview, set_seed, get_device, acc_dir,
                      save_checkpoint, save_json, center_crop, load_checkpoint)
 from ..core.inference import recon_unrolled
@@ -169,7 +169,7 @@ class ZeroShotTrainer:
 
     def _fit_inline(self):
         """Fit ZS-SSL on the currently-built slice (best model kept in memory,
-        no per-epoch disk writes). Returns (metrics, recon, ref)."""
+        no per-epoch disk writes); loads the best (val) weights at the end."""
         cfg = self.cfg
         best_val, best_state, since = float("inf"), None, 0
         for epoch in range(cfg.epochs):
@@ -189,7 +189,6 @@ class ZeroShotTrainer:
                 break
         if best_state is not None:
             self.model.load_state_dict(best_state)
-        return self._image_metrics()
 
     def train_all(self, save_figs=False):
         """Fit ZS-SSL independently on EVERY slice of the split and save each
@@ -213,37 +212,48 @@ class ZeroShotTrainer:
         for i in range(len(files)):
             cfg.zs_slice = i
             self._build()                                        # fresh model for slice i
-            img, recon, ref = self._fit_inline()
+            self._fit_inline()
+            # SENSE-GT comparison: ref = SENSE combine of full k-space, zf = zero-filled
+            ref, zf, recon = recon_unrolled(self.model, self.kspace_slice,
+                                            self.sens_slice, self.omega, self.device)
+            rf, zc, rc = center_crop(ref), center_crop(zf), center_crop(recon)
+            m_rec = all_metrics(rf, match_scale(rf, rc))         # recon vs SENSE-GT
+            m_zf = all_metrics(rf, match_scale(rf, zc))          # zero-filled vs SENSE-GT
             np.save(os.path.join(recon_dir, f"slice_{i:04d}.npy"), recon)
-            summary.append({"slice": i, "file": os.path.basename(files[i]), **img})
+            summary.append({"slice": i, "file": os.path.basename(files[i]),
+                            "recon": m_rec, "zero_filled": m_zf})
             save_json(summary, os.path.join(base, "summary_partial.json"))  # progressive
             if save_figs:
-                self._save_slice_fig(fig_dir, i, ref, recon, img)
-            print(f"  [{i+1}/{len(files)}] {os.path.basename(files[i])} "
-                  f"ssim={img['ssim']:.4f} psnr={img['psnr']:.3f} "
-                  f"nmse={img['nmse']:.5f} ({time.time()-t0:.0f}s elapsed)")
+                self._save_slice_fig(fig_dir, i, rf, zc, rc, m_rec, m_zf)
+            print(f"  [{i+1}/{len(files)}] {os.path.basename(files[i])} | "
+                  f"recon ssim={m_rec['ssim']:.4f} psnr={m_rec['psnr']:.3f} | "
+                  f"zf ssim={m_zf['ssim']:.4f} psnr={m_zf['psnr']:.3f} ({time.time()-t0:.0f}s)")
 
-        agg = {k: float(np.nanmean([s[k] for s in summary]))
-               for k in ("ssim", "psnr", "nmse", "nmae")}
+        mean = lambda key, g: float(np.nanmean([s[g][key] for s in summary]))
+        agg = {"recon": {k: mean(k, "recon") for k in ("ssim", "psnr", "nmse", "nmae")},
+               "zero_filled": {k: mean(k, "zero_filled") for k in ("ssim", "psnr", "nmse", "nmae")}}
         save_json({"split": self.split, "method": f"zsssl/{cfg.model}",
+                   "reference": "SENSE combination (fully-sampled)",
                    "n_slices": len(summary), "mean": agg, "per_slice": summary,
                    "total_seconds": round(time.time() - t0, 1)},
                   os.path.join(base, "summary.json"))
-        print(f"[zs-all] DONE {len(summary)} slices | "
-              f"mean SSIM={agg['ssim']:.4f} PSNR={agg['psnr']:.3f} | "
-              f"recon -> {os.path.abspath(recon_dir)} | summary.json written")
+        print(f"[zs-all] DONE {len(summary)} slices | recon mean SSIM={agg['recon']['ssim']:.4f} "
+              f"PSNR={agg['recon']['psnr']:.3f} | zero-filled SSIM={agg['zero_filled']['ssim']:.4f} | "
+              f"-> {os.path.abspath(base)} (summary.json)")
         return agg
 
-    def _save_slice_fig(self, fig_dir, idx, ref, recon, img):
+    def _save_slice_fig(self, fig_dir, idx, gt, zf, recon, m_rec, m_zf):
+        """3-panel: SENSE GT | zero-filled (ssim/psnr) | recon (ssim/psnr)."""
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        from ..metrics import match_scale
-        r = center_crop(np.abs(ref)); rc = center_crop(np.abs(recon))
-        fig, ax = plt.subplots(1, 2, figsize=(9, 5))
-        ax[0].imshow(r, cmap="gray", vmax=0.6 * r.max()); ax[0].set_title("SENSE ref"); ax[0].axis("off")
-        ax[1].imshow(match_scale(r, rc), cmap="gray", vmax=0.6 * r.max())
-        ax[1].set_title(f"ZS-SSL  ssim={img['ssim']:.3f} psnr={img['psnr']:.2f}"); ax[1].axis("off")
+        vmax = 0.6 * gt.max()
+        fig, ax = plt.subplots(1, 3, figsize=(13, 5))
+        ax[0].imshow(gt, cmap="gray", vmax=vmax); ax[0].set_title("SENSE GT"); ax[0].axis("off")
+        ax[1].imshow(zf, cmap="gray", vmax=vmax)
+        ax[1].set_title(f"zero-filled\nssim={m_zf['ssim']:.3f} psnr={m_zf['psnr']:.2f}"); ax[1].axis("off")
+        ax[2].imshow(recon, cmap="gray", vmax=vmax)
+        ax[2].set_title(f"ZS-SSL recon\nssim={m_rec['ssim']:.3f} psnr={m_rec['psnr']:.2f}"); ax[2].axis("off")
         plt.tight_layout(); plt.savefig(os.path.join(fig_dir, f"slice_{idx:04d}.png"), dpi=110); plt.close(fig)
 
     def _save_outputs(self, rdir, recon, ref, img, extra=None):
