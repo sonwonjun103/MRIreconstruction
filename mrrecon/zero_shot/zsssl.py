@@ -167,6 +167,85 @@ class ZeroShotTrainer:
         print(f"  recon   : {os.path.abspath(os.path.join(rdir, 'recon.npy'))}")
         return img
 
+    def _fit_inline(self):
+        """Fit ZS-SSL on the currently-built slice (best model kept in memory,
+        no per-epoch disk writes). Returns (metrics, recon, ref)."""
+        cfg = self.cfg
+        best_val, best_state, since = float("inf"), None, 0
+        for epoch in range(cfg.epochs):
+            self.model.train()
+            for b in self.dl:
+                x, sens, ref_k, trn, loss_m = self._batch_to_device(b)
+                _, _, nw_k = self.model(x, sens, trn, loss_m)
+                loss = self.loss_fn(nw_k, ref_k)
+                self.optim.zero_grad(); loss.backward(); self.optim.step()
+            val = self._val_loss()
+            if val < best_val:
+                best_val, since = val, 0
+                best_state = {k: v.detach().clone() for k, v in self.model.state_dict().items()}
+            else:
+                since += 1
+            if since >= cfg.zs_patience:
+                break
+        if best_state is not None:
+            self.model.load_state_dict(best_state)
+        return self._image_metrics()
+
+    def train_all(self, save_figs=False):
+        """Fit ZS-SSL independently on EVERY slice of the split and save each
+        reconstruction + an aggregate summary under out_dir/run_name/
+        (e.g. ``Results/zs_ssl/``). Each scan is fit from scratch (true ZS-SSL)."""
+        set_seed(self.cfg.seed)
+        cfg = self.cfg
+        files = list_slice_files(cfg.data_root, cfg.tissue, self.split,
+                                 max_slices=cfg.max_slices, modality=cfg.modality,
+                                 full=cfg.full_subject, drop_edge=cfg.drop_edge_slices)
+        base = os.path.join(cfg.out_dir, cfg.run_name)          # e.g. Results/zs_ssl
+        recon_dir = os.path.join(base, "recon"); os.makedirs(recon_dir, exist_ok=True)
+        fig_dir = os.path.join(base, "figs")
+        if save_figs:
+            os.makedirs(fig_dir, exist_ok=True)
+        print(f"[zs-all] ZS-SSL on EVERY {self.split} slice -> {os.path.abspath(base)}")
+        print(f"[zs-all] {len(files)} slices x per-scan fit (SLOW: each scan is trained from scratch)")
+        save_json(cfg.to_dict(), os.path.join(base, "config.json"))
+
+        summary, t0 = [], time.time()
+        for i in range(len(files)):
+            cfg.zs_slice = i
+            self._build()                                        # fresh model for slice i
+            img, recon, ref = self._fit_inline()
+            np.save(os.path.join(recon_dir, f"slice_{i:04d}.npy"), recon)
+            summary.append({"slice": i, "file": os.path.basename(files[i]), **img})
+            save_json(summary, os.path.join(base, "summary_partial.json"))  # progressive
+            if save_figs:
+                self._save_slice_fig(fig_dir, i, ref, recon, img)
+            print(f"  [{i+1}/{len(files)}] {os.path.basename(files[i])} "
+                  f"ssim={img['ssim']:.4f} psnr={img['psnr']:.3f} "
+                  f"nmse={img['nmse']:.5f} ({time.time()-t0:.0f}s elapsed)")
+
+        agg = {k: float(np.nanmean([s[k] for s in summary]))
+               for k in ("ssim", "psnr", "nmse", "nmae")}
+        save_json({"split": self.split, "method": f"zsssl/{cfg.model}",
+                   "n_slices": len(summary), "mean": agg, "per_slice": summary,
+                   "total_seconds": round(time.time() - t0, 1)},
+                  os.path.join(base, "summary.json"))
+        print(f"[zs-all] DONE {len(summary)} slices | "
+              f"mean SSIM={agg['ssim']:.4f} PSNR={agg['psnr']:.3f} | "
+              f"recon -> {os.path.abspath(recon_dir)} | summary.json written")
+        return agg
+
+    def _save_slice_fig(self, fig_dir, idx, ref, recon, img):
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from ..metrics import match_scale
+        r = center_crop(np.abs(ref)); rc = center_crop(np.abs(recon))
+        fig, ax = plt.subplots(1, 2, figsize=(9, 5))
+        ax[0].imshow(r, cmap="gray", vmax=0.6 * r.max()); ax[0].set_title("SENSE ref"); ax[0].axis("off")
+        ax[1].imshow(match_scale(r, rc), cmap="gray", vmax=0.6 * r.max())
+        ax[1].set_title(f"ZS-SSL  ssim={img['ssim']:.3f} psnr={img['psnr']:.2f}"); ax[1].axis("off")
+        plt.tight_layout(); plt.savefig(os.path.join(fig_dir, f"slice_{idx:04d}.png"), dpi=110); plt.close(fig)
+
     def _save_outputs(self, rdir, recon, ref, img, extra=None):
         np.save(os.path.join(rdir, "recon.npy"), recon)
         np.save(os.path.join(rdir, "reference.npy"), ref)

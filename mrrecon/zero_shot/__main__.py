@@ -32,6 +32,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="zsssl = single-scan ZS-SSL; diffusion = train the prior")
     p.add_argument("--ckpt", default=None,
                    help="(zsssl) reconstruct from this checkpoint instead of fitting")
+    p.add_argument("--zs_all", action="store_true",
+                   help="(zsssl) fit EVERY slice of the split and save all recons + summary "
+                        "under out_dir/run_name (e.g. Results/zs_ssl). Slow.")
+    p.add_argument("--save_figs", action="store_true",
+                   help="(zsssl --zs_all) also save a per-slice comparison PNG")
     _add_common(p)
     _add_split(p)
     _add_unrolled(p)
@@ -47,8 +52,15 @@ def main() -> None:
     if args.algo == "zsssl":
         from mrrecon.zero_shot.zsssl import ZeroShotTrainer
         trainer = ZeroShotTrainer(cfg, split=args.split)
-        run = (lambda: trainer.infer(args.ckpt)) if args.ckpt else trainer.train
-        tag = "zero_shot:zsssl" + ("-infer" if args.ckpt else "")
+        if args.zs_all:                       # fit every slice -> out_dir/run_name
+            run = lambda: trainer.train_all(save_figs=args.save_figs)
+            tag = "zero_shot:zsssl-all"
+        elif args.ckpt:
+            run = lambda: trainer.infer(args.ckpt)
+            tag = "zero_shot:zsssl-infer"
+        else:
+            run = trainer.train
+            tag = "zero_shot:zsssl"
     else:
         from mrrecon.zero_shot.diffusion import DiffusionTrainer
         run = DiffusionTrainer(cfg).train
